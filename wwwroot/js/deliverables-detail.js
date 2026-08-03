@@ -53,7 +53,7 @@ async function runVersionAction(deliverableId, versionId, action, button) {
   const configs = {
     'submit-review': { title: '提交审批', message: '提交后版本将进入审批中状态，由审批者执行发布或退回。', submitText: '提交审批' },
     'return-draft': { title: '退回修改', message: '确认将该版本退回草稿状态吗？', inputLabel: '退回原因', inputRequired: true, submitText: '确认退回' },
-    release: { title: '审批并发布', message: '发布后该版本将成为当前有效版本，原当前版本自动标记为已替代。', inputLabel: '审批意见', inputRequired: false, submitText: '确认发布' },
+    release: { title: '审批并发布', message: '发布后该版本将成为当前有效版本，原当前版本自动标记为已替代。', inputLabel: '审批意见', inputRequired: true, submitText: '确认发布' },
     deprecate: { title: '废止版本', message: '废止后该版本将被标记为禁止继续使用。', inputLabel: '废止原因', inputRequired: true, submitText: '确认废止', danger: true }
   };
   const config = configs[action];
