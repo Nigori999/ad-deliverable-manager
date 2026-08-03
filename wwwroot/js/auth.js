@@ -53,7 +53,10 @@ function completeLogin(status) {
   authRoot.replaceChildren();
   appShell.classList.remove('hidden');
   applyRoleUi();
-  if (status.user.mustChangePassword) setTimeout(() => openChangePassword(true), 100);
+  if (status.user.mustChangePassword) {
+    setTimeout(() => openChangePassword(true), 100);
+    return;
+  }
   route();
 }
 
