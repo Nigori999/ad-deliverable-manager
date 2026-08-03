@@ -1,0 +1,17 @@
+**/bin/
+**/obj/
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.log
+publish/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+backups/*.db
+logs/*
+!data/.gitkeep
+!backups/.gitkeep
+!logs/.gitkeep
