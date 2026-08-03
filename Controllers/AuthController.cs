@@ -31,16 +31,15 @@ public sealed class AuthController : ControllerBase
         if (User.Identity?.IsAuthenticated != true)
             return Ok(new { requiresBootstrap = false, authenticated = false });
 
+        var current = await _users.FindByIdAsync(User.GetUserId(), cancellationToken);
+        if (current is null || !current.IsEnabled)
+            return Ok(new { requiresBootstrap = false, authenticated = false });
+
         return Ok(new
         {
             requiresBootstrap = false,
             authenticated = true,
-            user = new
-            {
-                id = User.GetUserId(), username = User.GetUsername(), displayName = User.GetDisplayName(),
-                roleCode = User.GetRoleCode(), roleName = AppRoles.DisplayName(User.GetRoleCode()),
-                mustChangePassword = User.FindFirstValue("mustChangePassword") == "1"
-            }
+            user = UserResponse(current)
         });
     }
 
