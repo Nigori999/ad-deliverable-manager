@@ -32,8 +32,11 @@ public sealed class AuthController : ControllerBase
             return Ok(new { requiresBootstrap = false, authenticated = false });
 
         var current = await _users.FindByIdAsync(User.GetUserId(), cancellationToken);
-        if (current is null || !current.IsEnabled)
+        if (current is null || !current.IsEnabled || !string.Equals(current.RoleCode, User.GetRoleCode(), StringComparison.Ordinal))
+        {
+            await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
             return Ok(new { requiresBootstrap = false, authenticated = false });
+        }
 
         return Ok(new
         {
@@ -62,6 +65,9 @@ public sealed class AuthController : ControllerBase
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrEmpty(request.Password))
+            return Unauthorized(new { message = "用户名或密码不正确。" });
+
         var user = await _users.FindByUsernameAsync(request.Username, cancellationToken);
         if (user is null || !user.IsEnabled || !_passwords.Verify(request.Password, user.PasswordHash, user.PasswordSalt))
             return Unauthorized(new { message = "用户名或密码不正确。" });
