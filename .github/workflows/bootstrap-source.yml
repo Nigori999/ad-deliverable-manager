@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'bootstrap/source.zip.b64'
+      - 'bootstrap/source.part*.b64'
       - '.github/workflows/bootstrap-source.yml'
   workflow_dispatch:
 
@@ -21,22 +21,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check bootstrap payload
+      - name: Check complete bootstrap payload
         id: payload
         shell: pwsh
         run: |
-          if (Test-Path 'bootstrap/source.zip.b64') {
+          $parts = Get-ChildItem 'bootstrap/source.part*.b64' -ErrorAction SilentlyContinue | Sort-Object Name
+          if ($parts.Count -eq 9) {
             "available=true" >> $env:GITHUB_OUTPUT
           } else {
             "available=false" >> $env:GITHUB_OUTPUT
-            Write-Host 'Bootstrap payload has not been uploaded yet.'
+            Write-Host "Waiting for all 9 payload parts. Current count: $($parts.Count)"
           }
 
       - name: Expand source archive
         if: steps.payload.outputs.available == 'true'
         shell: pwsh
         run: |
-          $base64 = Get-Content 'bootstrap/source.zip.b64' -Raw
+          $parts = Get-ChildItem 'bootstrap/source.part*.b64' | Sort-Object Name
+          $base64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
           [IO.File]::WriteAllBytes('source.zip', [Convert]::FromBase64String($base64))
           Expand-Archive -Path 'source.zip' -DestinationPath 'source-staging' -Force
           Copy-Item -Path 'source-staging/AdDeliverableManager/*' -Destination '.' -Recurse -Force
