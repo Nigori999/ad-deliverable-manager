@@ -1,5 +1,5 @@
 name: Windows 构建与发布
-run-name: Windows 构建与发布 · ${{ github.ref_name }} · #${{ github.run_number }}
+run-name: "Windows 构建与发布 · ${{ github.ref_name }} · #${{ github.run_number }}"
 
 on:
   push:
