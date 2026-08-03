@@ -1,5 +1,7 @@
 using AdDeliverableManager.Models;
+using AdDeliverableManager.Security;
 using AdDeliverableManager.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 
@@ -7,6 +9,7 @@ namespace AdDeliverableManager.Controllers;
 
 [ApiController]
 [Route("internal/deliverables")]
+[Authorize]
 public sealed class DeliverablesController : ControllerBase
 {
     private readonly DeliverableRepository _repository;
@@ -38,10 +41,13 @@ public sealed class DeliverablesController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Editor)]
     public async Task<IActionResult> Create([FromBody] DeliverableCreateRequest request, CancellationToken cancellationToken)
     {
         try
         {
+            request.Operator = User.GetDisplayName();
+            request.InitialVersion.Operator = request.Operator;
             var result = await _repository.CreateAsync(request, cancellationToken);
             return Ok(new { id = result.Id, code = result.Code, message = "交付物及首个版本已创建。" });
         }
@@ -50,10 +56,12 @@ public sealed class DeliverablesController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Editor)]
     public async Task<IActionResult> Update(int id, [FromBody] DeliverableUpdateRequest request, CancellationToken cancellationToken)
     {
         try
         {
+            request.Operator = User.GetDisplayName();
             var updated = await _repository.UpdateAsync(id, request, cancellationToken);
             return updated ? Ok(new { message = "交付物信息已更新。" }) : Conflict(new { message = "数据已被其他人修改，请刷新后重试。" });
         }
@@ -61,10 +69,12 @@ public sealed class DeliverablesController : ControllerBase
     }
 
     [HttpPost("{id:int}/versions")]
+    [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Editor)]
     public async Task<IActionResult> AddVersion(int id, [FromBody] VersionCreateRequest request, CancellationToken cancellationToken)
     {
         try
         {
+            request.Operator = User.GetDisplayName();
             var versionId = await _repository.AddVersionAsync(id, request, cancellationToken);
             return Ok(new { id = versionId, message = "新版本已创建为草稿。" });
         }
@@ -76,11 +86,15 @@ public sealed class DeliverablesController : ControllerBase
     [HttpPost("versions/{versionId:int}/{action}")]
     public async Task<IActionResult> VersionAction(int versionId, string action, [FromBody] LifecycleActionRequest request, CancellationToken cancellationToken)
     {
+        var normalized = action.ToLowerInvariant();
         var allowed = new[] { "submit-review", "return-draft", "release", "deprecate" };
-        if (!allowed.Contains(action, StringComparer.OrdinalIgnoreCase)) return BadRequest(new { message = "不支持的版本操作。" });
+        if (!allowed.Contains(normalized, StringComparer.Ordinal)) return BadRequest(new { message = "不支持的版本操作。" });
+        if (!CanRunVersionAction(normalized)) return Forbid();
+
         try
         {
-            var status = await _repository.TransitionVersionAsync(versionId, action.ToLowerInvariant(), request, cancellationToken);
+            request.Operator = User.GetDisplayName();
+            var status = await _repository.TransitionVersionAsync(versionId, normalized, request, cancellationToken);
             return Ok(new { status, message = "版本状态已更新。" });
         }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
@@ -89,13 +103,25 @@ public sealed class DeliverablesController : ControllerBase
     }
 
     [HttpPost("{id:int}/archive")]
+    [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Editor)]
     public async Task<IActionResult> Archive(int id, [FromBody] LifecycleActionRequest request, CancellationToken cancellationToken)
     {
         try
         {
-            await _repository.ArchiveAsync(id, request.Operator, request.Reason, cancellationToken);
+            await _repository.ArchiveAsync(id, User.GetDisplayName(), request.Reason, cancellationToken);
             return Ok(new { message = "交付物已归档，历史记录仍保留。" });
         }
         catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
+    }
+
+    private bool CanRunVersionAction(string action)
+    {
+        if (User.IsInRole(AppRoles.Admin)) return true;
+        return action switch
+        {
+            "submit-review" => User.IsInRole(AppRoles.Editor),
+            "return-draft" or "release" or "deprecate" => User.IsInRole(AppRoles.Approver),
+            _ => false
+        };
     }
 }
