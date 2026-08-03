@@ -6,10 +6,13 @@ on:
     paths:
       - 'bootstrap/source.part*.b64'
       - '.github/workflows/bootstrap-source.yml'
+  issues:
+    types: [opened]
   workflow_dispatch:
 
 permissions:
   contents: write
+  issues: read
 
 jobs:
   unpack-commit-and-verify:
