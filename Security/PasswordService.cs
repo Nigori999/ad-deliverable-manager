@@ -18,6 +18,7 @@ public sealed class PasswordService
 
     public bool Verify(string password, string hashBase64, string saltBase64)
     {
+        if (string.IsNullOrEmpty(password)) return false;
         try
         {
             var salt = Convert.FromBase64String(saltBase64);
