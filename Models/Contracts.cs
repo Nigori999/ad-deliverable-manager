@@ -148,3 +148,74 @@ public sealed class ChangeActionRequest
     public string? Opinion { get; set; }
     public int? ToVersionId { get; set; }
 }
+
+public sealed class BootstrapAdminRequest
+{
+    public string Username { get; set; } = "admin";
+    public string DisplayName { get; set; } = "系统管理员";
+    public string Password { get; set; } = "";
+}
+
+public sealed class LoginRequest
+{
+    public string Username { get; set; } = "";
+    public string Password { get; set; } = "";
+    public bool RememberMe { get; set; }
+}
+
+public sealed class ChangePasswordRequest
+{
+    public string CurrentPassword { get; set; } = "";
+    public string NewPassword { get; set; } = "";
+}
+
+public sealed class UserCreateRequest
+{
+    public string Username { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string Password { get; set; } = "";
+    public string RoleCode { get; set; } = "VIEWER";
+    public bool MustChangePassword { get; set; } = true;
+}
+
+public sealed class UserUpdateRequest
+{
+    public string DisplayName { get; set; } = "";
+    public string RoleCode { get; set; } = "VIEWER";
+    public bool IsEnabled { get; set; } = true;
+    public int Revision { get; set; }
+}
+
+public sealed class UserResetPasswordRequest
+{
+    public string NewPassword { get; set; } = "";
+    public bool MustChangePassword { get; set; } = true;
+}
+
+public sealed class RelationCreateRequest
+{
+    public int SourceDeliverableId { get; set; }
+    public int? SourceVersionId { get; set; }
+    public int TargetDeliverableId { get; set; }
+    public int? TargetVersionId { get; set; }
+    public string RelationType { get; set; } = "REFERENCES";
+    public string? Description { get; set; }
+}
+
+public sealed class DeliverableExportRequest
+{
+    public string[] Fields { get; set; } = Array.Empty<string>();
+    public string? Keyword { get; set; }
+    public int? DepartmentId { get; set; }
+    public int? TypeId { get; set; }
+    public int? ProjectId { get; set; }
+    public string? Status { get; set; }
+    public string? Confidentiality { get; set; }
+    public string? SharePolicy { get; set; }
+}
+
+public sealed class ChangeExportRequest
+{
+    public string[] Fields { get; set; } = Array.Empty<string>();
+    public string? Status { get; set; }
+}
