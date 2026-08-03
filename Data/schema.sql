@@ -1,0 +1,253 @@
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+PRAGMA busy_timeout = 5000;
+
+CREATE TABLE IF NOT EXISTS Departments (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    DepartmentCode TEXT NOT NULL UNIQUE,
+    DepartmentName TEXT NOT NULL,
+    SortOrder INTEGER NOT NULL DEFAULT 0,
+    IsEnabled INTEGER NOT NULL DEFAULT 1,
+    CreatedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS Projects (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ProjectCode TEXT NOT NULL UNIQUE,
+    ProjectName TEXT NOT NULL,
+    VehicleModel TEXT,
+    PlatformName TEXT,
+    ProjectStatus TEXT NOT NULL DEFAULT 'ACTIVE',
+    IsEnabled INTEGER NOT NULL DEFAULT 1,
+    CreatedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS DeliverableTypes (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    TypeCode TEXT NOT NULL UNIQUE,
+    TypeName TEXT NOT NULL,
+    DepartmentId INTEGER NOT NULL,
+    HasHardwareFields INTEGER NOT NULL DEFAULT 0,
+    SortOrder INTEGER NOT NULL DEFAULT 0,
+    IsEnabled INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (DepartmentId) REFERENCES Departments(Id)
+);
+
+CREATE TABLE IF NOT EXISTS Deliverables (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    DeliverableCode TEXT NOT NULL UNIQUE,
+    UnifiedName TEXT NOT NULL,
+    DepartmentId INTEGER NOT NULL,
+    DeliverableTypeId INTEGER NOT NULL,
+    ProjectId INTEGER NOT NULL,
+    ObjectCode TEXT NOT NULL,
+    BusinessModule TEXT,
+    ResponsiblePerson TEXT NOT NULL,
+    DefaultConfidentiality TEXT NOT NULL,
+    DefaultSharePolicy TEXT NOT NULL,
+    Description TEXT,
+    CurrentVersionId INTEGER,
+    LifecycleStatus TEXT NOT NULL DEFAULT 'ACTIVE',
+    CreatedBy TEXT NOT NULL,
+    CreatedAt TEXT NOT NULL,
+    UpdatedAt TEXT NOT NULL,
+    Revision INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (DepartmentId) REFERENCES Departments(Id),
+    FOREIGN KEY (DeliverableTypeId) REFERENCES DeliverableTypes(Id),
+    FOREIGN KEY (ProjectId) REFERENCES Projects(Id)
+);
+
+CREATE TABLE IF NOT EXISTS DeliverableVersions (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    DeliverableId INTEGER NOT NULL,
+    InternalVersion TEXT NOT NULL,
+    OriginalVersion TEXT,
+    OriginalFileName TEXT NOT NULL,
+    UnifiedFileName TEXT NOT NULL,
+    PreviousVersionId INTEGER,
+    ServerPath TEXT NOT NULL,
+    FileExtension TEXT,
+    FileSize INTEGER,
+    HashAlgorithm TEXT,
+    HashValue TEXT,
+    VersionStatus TEXT NOT NULL DEFAULT 'DRAFT',
+    ChangeSummary TEXT,
+    ConfidentialityLevel TEXT NOT NULL,
+    SharePolicy TEXT NOT NULL,
+    Author TEXT NOT NULL,
+    Reviewer TEXT,
+    Approver TEXT,
+    PlannedReleaseDate TEXT,
+    ReleaseDate TEXT,
+    EffectiveDate TEXT,
+    ExpiryDate TEXT,
+    IsCurrent INTEGER NOT NULL DEFAULT 0,
+    CreatedBy TEXT NOT NULL,
+    CreatedAt TEXT NOT NULL,
+    UpdatedAt TEXT NOT NULL,
+    Revision INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (DeliverableId, InternalVersion),
+    FOREIGN KEY (DeliverableId) REFERENCES Deliverables(Id) ON DELETE CASCADE,
+    FOREIGN KEY (PreviousVersionId) REFERENCES DeliverableVersions(Id)
+);
+
+CREATE TABLE IF NOT EXISTS HardwarePackageDetails (
+    VersionId INTEGER PRIMARY KEY,
+    HardwareCategory TEXT,
+    HardwareModel TEXT,
+    SupplierName TEXT,
+    SupplierPartNumber TEXT,
+    InternalPartNumber TEXT,
+    SoftwarePackageType TEXT,
+    CompatibleHardwareVersion TEXT,
+    CompatiblePlatform TEXT,
+    FlashMethod TEXT,
+    FlashTool TEXT,
+    DependencyDescription TEXT,
+    ReleaseNotePath TEXT,
+    FlashGuidePath TEXT,
+    Remark TEXT,
+    FOREIGN KEY (VersionId) REFERENCES DeliverableVersions(Id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS PrdDetails (
+    VersionId INTEGER PRIMARY KEY,
+    ProductModule TEXT,
+    FunctionName TEXT,
+    RequirementSource TEXT,
+    TargetVehicle TEXT,
+    TargetProductVersion TEXT,
+    TargetMilestone TEXT,
+    ProductOwner TEXT,
+    Reviewers TEXT,
+    ReferenceBasis TEXT,
+    InScope TEXT,
+    OutOfScope TEXT,
+    FOREIGN KEY (VersionId) REFERENCES DeliverableVersions(Id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS FrDetails (
+    VersionId INTEGER PRIMARY KEY,
+    SystemName TEXT,
+    SubsystemName TEXT,
+    FunctionModule TEXT,
+    UpstreamPrdCode TEXT,
+    UpstreamPrdVersion TEXT,
+    FunctionOwner TEXT,
+    SystemOwner TEXT,
+    TargetSoftwareBaseline TEXT,
+    TargetMilestone TEXT,
+    InterfaceImpact TEXT,
+    SafetyLevel TEXT,
+    FOREIGN KEY (VersionId) REFERENCES DeliverableVersions(Id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS TestCaseDetails (
+    VersionId INTEGER PRIMARY KEY,
+    TestLevel TEXT,
+    TestModule TEXT,
+    UpstreamFrCode TEXT,
+    UpstreamFrVersion TEXT,
+    CaseCount INTEGER,
+    CoverageScope TEXT,
+    TestEnvironment TEXT,
+    TestOwner TEXT,
+    ApplicableSoftwareVersion TEXT,
+    AutomatedCaseCount INTEGER,
+    ManualCaseCount INTEGER,
+    FOREIGN KEY (VersionId) REFERENCES DeliverableVersions(Id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS ChangeRecords (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ChangeCode TEXT NOT NULL UNIQUE,
+    DeliverableId INTEGER NOT NULL,
+    FromVersionId INTEGER,
+    ToVersionId INTEGER,
+    ChangeType TEXT NOT NULL,
+    ChangeReason TEXT NOT NULL,
+    ChangeContent TEXT NOT NULL,
+    ImpactScope TEXT,
+    RelatedIssueCode TEXT,
+    Applicant TEXT NOT NULL,
+    ResponsiblePerson TEXT NOT NULL,
+    ChangeStatus TEXT NOT NULL DEFAULT 'PENDING_ASSESSMENT',
+    Reviewer TEXT,
+    ReviewOpinion TEXT,
+    PlannedCompletionDate TEXT,
+    ActualCompletionDate TEXT,
+    CreatedAt TEXT NOT NULL,
+    UpdatedAt TEXT NOT NULL,
+    FOREIGN KEY (DeliverableId) REFERENCES Deliverables(Id),
+    FOREIGN KEY (FromVersionId) REFERENCES DeliverableVersions(Id),
+    FOREIGN KEY (ToVersionId) REFERENCES DeliverableVersions(Id)
+);
+
+CREATE TABLE IF NOT EXISTS DeliverableRelations (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    SourceDeliverableId INTEGER NOT NULL,
+    SourceVersionId INTEGER,
+    TargetDeliverableId INTEGER NOT NULL,
+    TargetVersionId INTEGER,
+    RelationType TEXT NOT NULL,
+    Description TEXT,
+    CreatedAt TEXT NOT NULL,
+    FOREIGN KEY (SourceDeliverableId) REFERENCES Deliverables(Id),
+    FOREIGN KEY (SourceVersionId) REFERENCES DeliverableVersions(Id),
+    FOREIGN KEY (TargetDeliverableId) REFERENCES Deliverables(Id),
+    FOREIGN KEY (TargetVersionId) REFERENCES DeliverableVersions(Id)
+);
+
+CREATE TABLE IF NOT EXISTS LifecycleRecords (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    DeliverableId INTEGER NOT NULL,
+    VersionId INTEGER NOT NULL,
+    ActionType TEXT NOT NULL,
+    FromStatus TEXT,
+    ToStatus TEXT NOT NULL,
+    ActionReason TEXT,
+    ReplacementVersionId INTEGER,
+    Operator TEXT NOT NULL,
+    ActionAt TEXT NOT NULL,
+    FOREIGN KEY (DeliverableId) REFERENCES Deliverables(Id),
+    FOREIGN KEY (VersionId) REFERENCES DeliverableVersions(Id),
+    FOREIGN KEY (ReplacementVersionId) REFERENCES DeliverableVersions(Id)
+);
+
+CREATE TABLE IF NOT EXISTS AuditLogs (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    EntityType TEXT NOT NULL,
+    EntityId INTEGER,
+    ActionType TEXT NOT NULL,
+    Operator TEXT NOT NULL,
+    Summary TEXT NOT NULL,
+    DetailJson TEXT,
+    CreatedAt TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS IX_Deliverables_DepartmentId ON Deliverables(DepartmentId);
+CREATE INDEX IF NOT EXISTS IX_Deliverables_ProjectId ON Deliverables(ProjectId);
+CREATE INDEX IF NOT EXISTS IX_Deliverables_TypeId ON Deliverables(DeliverableTypeId);
+CREATE INDEX IF NOT EXISTS IX_Deliverables_Status ON Deliverables(LifecycleStatus);
+CREATE INDEX IF NOT EXISTS IX_Versions_DeliverableId ON DeliverableVersions(DeliverableId);
+CREATE INDEX IF NOT EXISTS IX_Versions_Status ON DeliverableVersions(VersionStatus);
+CREATE INDEX IF NOT EXISTS IX_Versions_ReleaseDate ON DeliverableVersions(ReleaseDate);
+CREATE INDEX IF NOT EXISTS IX_Changes_Status ON ChangeRecords(ChangeStatus);
+
+INSERT OR IGNORE INTO Departments (DepartmentCode, DepartmentName, SortOrder, IsEnabled, CreatedAt) VALUES
+('HW', '硬件部门', 10, 1, datetime('now')),
+('PROD', '产品部门', 20, 1, datetime('now')),
+('SYS', '系统部门', 30, 1, datetime('now')),
+('TEST', '测试部门', 40, 1, datetime('now'));
+
+INSERT OR IGNORE INTO Projects (ProjectCode, ProjectName, VehicleModel, PlatformName, ProjectStatus, IsEnabled, CreatedAt) VALUES
+('COMMON', '通用平台', '', '智驾通用平台', 'ACTIVE', 1, datetime('now'));
+
+INSERT OR IGNORE INTO DeliverableTypes (TypeCode, TypeName, DepartmentId, HasHardwareFields, SortOrder, IsEnabled)
+SELECT 'SWP', '硬件软件包', Id, 1, 10, 1 FROM Departments WHERE DepartmentCode = 'HW';
+INSERT OR IGNORE INTO DeliverableTypes (TypeCode, TypeName, DepartmentId, HasHardwareFields, SortOrder, IsEnabled)
+SELECT 'PRD', '产品需求文档', Id, 0, 20, 1 FROM Departments WHERE DepartmentCode = 'PROD';
+INSERT OR IGNORE INTO DeliverableTypes (TypeCode, TypeName, DepartmentId, HasHardwareFields, SortOrder, IsEnabled)
+SELECT 'FR', '功能需求文档', Id, 0, 30, 1 FROM Departments WHERE DepartmentCode = 'SYS';
+INSERT OR IGNORE INTO DeliverableTypes (TypeCode, TypeName, DepartmentId, HasHardwareFields, SortOrder, IsEnabled)
+SELECT 'TC', '测试用例', Id, 0, 40, 1 FROM Departments WHERE DepartmentCode = 'TEST';
