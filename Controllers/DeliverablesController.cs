@@ -90,6 +90,8 @@ public sealed class DeliverablesController : ControllerBase
         var allowed = new[] { "submit-review", "return-draft", "release", "deprecate" };
         if (!allowed.Contains(normalized, StringComparer.Ordinal)) return BadRequest(new { message = "不支持的版本操作。" });
         if (!CanRunVersionAction(normalized)) return Forbid();
+        if ((normalized is "return-draft" or "release" or "deprecate") && string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest(new { message = "退回、发布或废止时必须填写处理意见。" });
 
         try
         {
