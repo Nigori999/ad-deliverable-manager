@@ -238,18 +238,4 @@ public sealed partial class DeliverableRepository
         await transaction.CommitAsync(cancellationToken);
         return toStatus;
     }
-
-    public async Task ArchiveAsync(int id, string operatorName, string? reason, CancellationToken cancellationToken)
-    {
-        await using var connection = await _database.OpenConnectionAsync(cancellationToken);
-        using var transaction = connection.BeginTransaction();
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "UPDATE Deliverables SET LifecycleStatus='ARCHIVED',UpdatedAt=$now,Revision=Revision+1 WHERE Id=$id";
-        command.Parameters.AddValue("$now", DateTime.UtcNow.ToString("O"));
-        command.Parameters.AddValue("$id", id);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) == 0) throw new KeyNotFoundException("交付物不存在。");
-        await InsertAuditAsync(connection, transaction, "Deliverable", id, "ARCHIVE", operatorName, reason ?? "归档交付物", cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-    }
 }
