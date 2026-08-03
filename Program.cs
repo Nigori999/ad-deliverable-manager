@@ -113,7 +113,7 @@ app.Use(async (context, next) =>
             return;
         }
 
-        var mustChange = context.User.FindFirst("mustChangePassword")?.Value == "1";
+        var mustChange = current.MustChangePassword;
         var allowedPasswordPath = context.Request.Path.StartsWithSegments("/internal/auth/change-password")
             || context.Request.Path.StartsWithSegments("/internal/auth/logout")
             || context.Request.Path.StartsWithSegments("/internal/auth/status");
