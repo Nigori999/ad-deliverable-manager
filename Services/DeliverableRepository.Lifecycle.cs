@@ -61,7 +61,7 @@ public sealed partial class DeliverableRepository
     public async Task<bool> UpdateAsync(int id, DeliverableUpdateRequest request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.UnifiedName) || string.IsNullOrWhiteSpace(request.ResponsiblePerson))
-            throw new ArgumentException("统一名称和责任人不能为空。" );
+            throw new ArgumentException("统一名称和责任人不能为空。");
 
         await using var connection = await _database.OpenConnectionAsync(cancellationToken);
         using var transaction = connection.BeginTransaction();
@@ -106,7 +106,7 @@ public sealed partial class DeliverableRepository
             """;
         master.Parameters.AddValue("$id", deliverableId);
         await using var reader = await master.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken)) throw new KeyNotFoundException("交付物不存在或已归档。" );
+        if (!await reader.ReadAsync(cancellationToken)) throw new KeyNotFoundException("交付物不存在或已归档。");
         var code = reader.GetString(0);
         var name = reader.GetString(1);
         var typeCode = reader.GetString(2);
@@ -133,26 +133,27 @@ public sealed partial class DeliverableRepository
         query.CommandText = "SELECT DeliverableId,VersionStatus,InternalVersion FROM DeliverableVersions WHERE Id=$id";
         query.Parameters.AddValue("$id", versionId);
         await using var reader = await query.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken)) throw new KeyNotFoundException("版本不存在。" );
+        if (!await reader.ReadAsync(cancellationToken)) throw new KeyNotFoundException("版本不存在。");
         var deliverableId = reader.GetInt32(0);
         var fromStatus = reader.GetString(1);
         var internalVersion = reader.GetString(2);
         await reader.DisposeAsync();
 
+        var normalizedAction = action.ToLowerInvariant();
         string toStatus;
         string actionType;
-        switch (action.ToLowerInvariant())
+        switch (normalizedAction)
         {
             case "submit-review":
-                if (fromStatus != "DRAFT") throw new InvalidOperationException("只有草稿版本可以提交评审。" );
+                if (fromStatus != "DRAFT") throw new InvalidOperationException("只有草稿版本可以提交审批。");
                 toStatus = "IN_REVIEW"; actionType = "SUBMIT_REVIEW";
                 break;
             case "return-draft":
-                if (fromStatus != "IN_REVIEW") throw new InvalidOperationException("只有评审中版本可以退回草稿。" );
+                if (fromStatus != "IN_REVIEW") throw new InvalidOperationException("只有审批中的版本可以退回草稿。");
                 toStatus = "DRAFT"; actionType = "RETURN_DRAFT";
                 break;
             case "release":
-                if (fromStatus is not ("DRAFT" or "IN_REVIEW")) throw new InvalidOperationException("只有草稿或评审中版本可以发布。" );
+                if (fromStatus != "IN_REVIEW") throw new InvalidOperationException("版本必须先提交审批，审批者才能正式发布。");
                 toStatus = "RELEASED"; actionType = "RELEASE";
                 await using (var supersede = connection.CreateCommand())
                 {
@@ -165,27 +166,34 @@ public sealed partial class DeliverableRepository
                 }
                 break;
             case "deprecate":
-                if (fromStatus is "DRAFT" or "IN_REVIEW") throw new InvalidOperationException("未发布版本无需废止，可保留草稿或退回修改。" );
+                if (fromStatus is "DRAFT" or "IN_REVIEW") throw new InvalidOperationException("未发布版本无需废止，可保留草稿或退回修改。");
                 toStatus = "DEPRECATED"; actionType = "DEPRECATE";
                 break;
             default:
-                throw new ArgumentException("不支持的版本操作。" );
+                throw new ArgumentException("不支持的版本操作。");
         }
 
         var now = DateTime.UtcNow.ToString("O");
         await using (var update = connection.CreateCommand())
         {
             update.Transaction = transaction;
-            update.CommandText = action == "release"
-                ? "UPDATE DeliverableVersions SET VersionStatus=$status,IsCurrent=1,ReleaseDate=COALESCE(ReleaseDate,$now),EffectiveDate=COALESCE(EffectiveDate,$now),UpdatedAt=$now,Revision=Revision+1 WHERE Id=$id"
-                : "UPDATE DeliverableVersions SET VersionStatus=$status,IsCurrent=CASE WHEN $status='DEPRECATED' THEN 0 ELSE IsCurrent END,UpdatedAt=$now,Revision=Revision+1 WHERE Id=$id";
+            update.CommandText = normalizedAction switch
+            {
+                "submit-review" => "UPDATE DeliverableVersions SET VersionStatus=$status,Reviewer=NULL,Approver=NULL,UpdatedAt=$now,Revision=Revision+1 WHERE Id=$id AND VersionStatus='DRAFT'",
+                "return-draft" => "UPDATE DeliverableVersions SET VersionStatus=$status,Reviewer=$operator,Approver=NULL,UpdatedAt=$now,Revision=Revision+1 WHERE Id=$id AND VersionStatus='IN_REVIEW'",
+                "release" => "UPDATE DeliverableVersions SET VersionStatus=$status,IsCurrent=1,Reviewer=COALESCE(Reviewer,$operator),Approver=$operator,ReleaseDate=COALESCE(ReleaseDate,$now),EffectiveDate=COALESCE(EffectiveDate,$now),UpdatedAt=$now,Revision=Revision+1 WHERE Id=$id AND VersionStatus='IN_REVIEW'",
+                "deprecate" => "UPDATE DeliverableVersions SET VersionStatus=$status,IsCurrent=0,UpdatedAt=$now,Revision=Revision+1 WHERE Id=$id AND VersionStatus IN ('RELEASED','SUPERSEDED')",
+                _ => throw new ArgumentException("不支持的版本操作。")
+            };
             update.Parameters.AddValue("$status", toStatus);
+            update.Parameters.AddValue("$operator", request.Operator);
             update.Parameters.AddValue("$now", now);
             update.Parameters.AddValue("$id", versionId);
-            await update.ExecuteNonQueryAsync(cancellationToken);
+            if (await update.ExecuteNonQueryAsync(cancellationToken) == 0)
+                throw new InvalidOperationException("版本状态已发生变化，请刷新后重试。");
         }
 
-        if (action == "release")
+        if (normalizedAction == "release")
         {
             await using var updateMaster = connection.CreateCommand();
             updateMaster.Transaction = transaction;
@@ -195,7 +203,7 @@ public sealed partial class DeliverableRepository
             updateMaster.Parameters.AddValue("$deliverableId", deliverableId);
             await updateMaster.ExecuteNonQueryAsync(cancellationToken);
         }
-        else if (action == "deprecate")
+        else if (normalizedAction == "deprecate")
         {
             await using var updateMaster = connection.CreateCommand();
             updateMaster.Transaction = transaction;
@@ -231,4 +239,17 @@ public sealed partial class DeliverableRepository
         return toStatus;
     }
 
+    public async Task ArchiveAsync(int id, string operatorName, string? reason, CancellationToken cancellationToken)
+    {
+        await using var connection = await _database.OpenConnectionAsync(cancellationToken);
+        using var transaction = connection.BeginTransaction();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "UPDATE Deliverables SET LifecycleStatus='ARCHIVED',UpdatedAt=$now,Revision=Revision+1 WHERE Id=$id";
+        command.Parameters.AddValue("$now", DateTime.UtcNow.ToString("O"));
+        command.Parameters.AddValue("$id", id);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) == 0) throw new KeyNotFoundException("交付物不存在。");
+        await InsertAuditAsync(connection, transaction, "Deliverable", id, "ARCHIVE", operatorName, reason ?? "归档交付物", cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
 }
