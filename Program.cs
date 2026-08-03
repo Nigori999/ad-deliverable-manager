@@ -91,7 +91,13 @@ app.Use(async (context, next) =>
         || context.Request.Path.StartsWithSegments("/internal/auth/bootstrap")
         || context.Request.Path.StartsWithSegments("/internal/auth/status");
 
-    if (isInternal && !isAnonymousAuth && context.User.Identity?.IsAuthenticated != true)
+    if (isInternal && isAnonymousAuth)
+    {
+        await next();
+        return;
+    }
+
+    if (isInternal && context.User.Identity?.IsAuthenticated != true)
     {
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         await context.Response.WriteAsJsonAsync(new { message = "请先登录。" });
