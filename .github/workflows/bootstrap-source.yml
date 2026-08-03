@@ -1,0 +1,84 @@
+name: Bootstrap source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bootstrap/source.zip.b64'
+      - '.github/workflows/bootstrap-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unpack-commit-and-verify:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check bootstrap payload
+        id: payload
+        shell: pwsh
+        run: |
+          if (Test-Path 'bootstrap/source.zip.b64') {
+            "available=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "available=false" >> $env:GITHUB_OUTPUT
+            Write-Host 'Bootstrap payload has not been uploaded yet.'
+          }
+
+      - name: Expand source archive
+        if: steps.payload.outputs.available == 'true'
+        shell: pwsh
+        run: |
+          $base64 = Get-Content 'bootstrap/source.zip.b64' -Raw
+          [IO.File]::WriteAllBytes('source.zip', [Convert]::FromBase64String($base64))
+          Expand-Archive -Path 'source.zip' -DestinationPath 'source-staging' -Force
+          Copy-Item -Path 'source-staging/AdDeliverableManager/*' -Destination '.' -Recurse -Force
+          Copy-Item -Path 'source-staging/AdDeliverableManager/.gitignore' -Destination '.gitignore' -Force
+          Copy-Item -Path 'source-staging/AdDeliverableManager/.github' -Destination '.github' -Recurse -Force
+          Remove-Item 'bootstrap' -Recurse -Force
+          Remove-Item 'source-staging' -Recurse -Force
+          Remove-Item 'source.zip' -Force
+          Remove-Item '.github/workflows/bootstrap-source.yml' -Force
+
+      - name: Commit complete source tree
+        if: steps.payload.outputs.available == 'true'
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Upload AD deliverable manager V1 source'
+          git push origin main
+
+      - name: Set up .NET 10
+        if: steps.payload.outputs.available == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        if: steps.payload.outputs.available == 'true'
+        run: dotnet restore
+
+      - name: Build
+        if: steps.payload.outputs.available == 'true'
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Publish win-x64 self-contained
+        if: steps.payload.outputs.available == 'true'
+        run: dotnet publish --configuration Release --runtime win-x64 --self-contained true --no-restore -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false --output publish/win-x64
+
+      - name: Upload Windows package
+        if: steps.payload.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AdDeliverableManager-win-x64
+          path: publish/win-x64/**
+          if-no-files-found: error
