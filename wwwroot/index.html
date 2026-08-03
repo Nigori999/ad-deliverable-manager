@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>智驾中心交付物管理系统</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">AD</div>
+        <div><strong>交付物管理</strong><span>智驾中心</span></div>
+      </div>
+      <nav>
+        <a href="#/dashboard" data-route="dashboard"><span>◫</span>仪表盘</a>
+        <a href="#/deliverables" data-route="deliverables"><span>▤</span>交付物台账</a>
+        <a href="#/changes" data-route="changes"><span>↻</span>变更管理</a>
+        <a href="#/settings" data-route="settings"><span>⚙</span>基础设置</a>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="status-dot"></span>本地SQLite运行
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div>
+          <h1 id="page-title">仪表盘</h1>
+          <p id="page-subtitle">统一管理交付物、版本和变更记录</p>
+        </div>
+        <div class="topbar-actions">
+          <label class="operator-field">当前操作人<input id="operator-name" maxlength="30" value="系统用户"></label>
+          <button class="btn btn-light" id="global-refresh">刷新</button>
+        </div>
+      </header>
+      <main id="app-content" class="content"><div class="loading">正在加载…</div></main>
+    </div>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root"></div>
+  <script src="/js/core.js"></script>
+  <script src="/js/dashboard.js"></script>
+  <script src="/js/deliverables-list.js"></script>
+  <script src="/js/deliverables-detail.js"></script>
+  <script src="/js/changes-settings.js"></script>
+</body>
+</html>
