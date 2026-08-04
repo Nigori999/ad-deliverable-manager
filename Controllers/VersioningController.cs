@@ -70,7 +70,7 @@ public sealed class VersioningController : ControllerBase
         try
         {
             request.Operator = User.GetDisplayName();
-            var versionId = await _deliverables.AddAutoVersionAsync(
+            var versionId = await _deliverables.AddAutoVersionWithOpenCyclePolicyAsync(
                 deliverableId, incrementType, request, changeId, cancellationToken);
             var preview = await _deliverables.GetVersionPreviewAsync(deliverableId, "PATCH", cancellationToken);
             return Ok(new
