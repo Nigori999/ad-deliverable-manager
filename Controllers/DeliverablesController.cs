@@ -74,11 +74,16 @@ public sealed class DeliverablesController : ControllerBase
     {
         try
         {
+            await _repository.EnsureDirectVersionCreationAllowedAsync(
+                id,
+                User.IsInRole(AppRoles.Admin),
+                cancellationToken);
             request.Operator = User.GetDisplayName();
             var versionId = await _repository.AddVersionAsync(id, request, cancellationToken);
             return Ok(new { id = versionId, message = "新版本已创建为草稿。" });
         }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
         catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
         catch (SqliteException ex) when (ex.SqliteErrorCode == 19) { return Conflict(new { message = "该内部版本号已存在。" }); }
     }
