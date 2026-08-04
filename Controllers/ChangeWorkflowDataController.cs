@@ -12,8 +12,13 @@ namespace AdDeliverableManager.Controllers;
 public sealed class ChangeWorkflowDataController : ControllerBase
 {
     private readonly DatabaseService _database;
+    private readonly DeliverableRepository _deliverables;
 
-    public ChangeWorkflowDataController(DatabaseService database) => _database = database;
+    public ChangeWorkflowDataController(DatabaseService database, DeliverableRepository deliverables)
+    {
+        _database = database;
+        _deliverables = deliverables;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] string? status, CancellationToken cancellationToken)
@@ -72,20 +77,20 @@ public sealed class ChangeWorkflowDataController : ControllerBase
             || string.IsNullOrWhiteSpace(request.ResponsiblePerson))
             return BadRequest(new { message = "交付物、变更原因、变更内容和责任人不能为空。" });
 
+        int fromVersionId;
+        try
+        {
+            fromVersionId = await _deliverables.RequireCurrentReleasedBaselineAsync(
+                request.DeliverableId, cancellationToken);
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+
         await using var connection = await _database.OpenConnectionAsync(cancellationToken);
         using var transaction = connection.BeginTransaction();
-
-        await using var deliverable = connection.CreateCommand();
-        deliverable.Transaction = transaction;
-        deliverable.CommandText = "SELECT CurrentVersionId FROM Deliverables WHERE Id=$id AND LifecycleStatus='ACTIVE'";
-        deliverable.Parameters.AddValue("$id", request.DeliverableId);
-        var currentVersion = await deliverable.ExecuteScalarAsync(cancellationToken);
-        if (currentVersion is null) return NotFound(new { message = "交付物不存在或已归档。" });
-        var fromVersionId = request.FromVersionId
-            ?? (currentVersion == DBNull.Value ? (int?)null : Convert.ToInt32(currentVersion));
-
         var now = DateTime.UtcNow.ToString("O");
         var changeCode = $"CHG-{DateTime.Now:yyyyMMddHHmmss}-{Random.Shared.Next(100, 999)}";
+
         await using var insert = connection.CreateCommand();
         insert.Transaction = transaction;
         insert.CommandText = """
@@ -117,13 +122,11 @@ public sealed class ChangeWorkflowDataController : ControllerBase
             """;
         audit.Parameters.AddValue("$id", id);
         audit.Parameters.AddValue("$operator", request.Applicant);
-        audit.Parameters.AddValue("$summary", fromVersionId.HasValue
-            ? $"发起变更 {changeCode}，锁定变更前版本 #{fromVersionId.Value}"
-            : $"发起变更 {changeCode}，当前无正式版本");
+        audit.Parameters.AddValue("$summary", $"发起变更 {changeCode}，锁定当前正式版本 #{fromVersionId}");
         audit.Parameters.AddValue("$now", now);
         await audit.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return Ok(new { id, code = changeCode, fromVersionId, message = "变更已发起并关联当前版本。" });
+        return Ok(new { id, code = changeCode, fromVersionId, message = "变更已发起并锁定当前正式版本。" });
     }
 
     private static async Task<List<object>> ReadItemsAsync(
