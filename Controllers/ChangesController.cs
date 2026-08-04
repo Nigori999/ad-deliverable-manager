@@ -12,8 +12,13 @@ namespace AdDeliverableManager.Controllers;
 public sealed class ChangesController : ControllerBase
 {
     private readonly DatabaseService _database;
+    private readonly DeliverableRepository _deliverables;
 
-    public ChangesController(DatabaseService database) => _database = database;
+    public ChangesController(DatabaseService database, DeliverableRepository deliverables)
+    {
+        _database = database;
+        _deliverables = deliverables;
+    }
 
     [HttpGet]
     public async Task<IActionResult> Get([FromQuery] string? status, CancellationToken cancellationToken)
@@ -58,6 +63,15 @@ public sealed class ChangesController : ControllerBase
             string.IsNullOrWhiteSpace(request.ChangeContent) || string.IsNullOrWhiteSpace(request.ResponsiblePerson))
             return BadRequest(new { message = "交付物、变更原因、变更内容和责任人不能为空。" });
 
+        int fromVersionId;
+        try
+        {
+            fromVersionId = await _deliverables.RequireCurrentReleasedBaselineAsync(
+                request.DeliverableId, cancellationToken);
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+
         await using var connection = await _database.OpenConnectionAsync(cancellationToken);
         using var transaction = connection.BeginTransaction();
         var now = DateTime.UtcNow.ToString("O");
@@ -73,16 +87,17 @@ public sealed class ChangesController : ControllerBase
             SELECT last_insert_rowid();
             """;
         command.Parameters.AddValue("$code", changeCode); command.Parameters.AddValue("$deliverableId", request.DeliverableId);
-        command.Parameters.AddValue("$fromVersionId", request.FromVersionId); command.Parameters.AddValue("$type", request.ChangeType);
+        command.Parameters.AddValue("$fromVersionId", fromVersionId); command.Parameters.AddValue("$type", request.ChangeType);
         command.Parameters.AddValue("$reason", request.ChangeReason.Trim()); command.Parameters.AddValue("$content", request.ChangeContent.Trim());
         command.Parameters.AddValue("$impact", request.ImpactScope); command.Parameters.AddValue("$issue", request.RelatedIssueCode);
         command.Parameters.AddValue("$applicant", request.Applicant); command.Parameters.AddValue("$owner", request.ResponsiblePerson.Trim());
         command.Parameters.AddValue("$planned", request.PlannedCompletionDate); command.Parameters.AddValue("$now", now);
         var id = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
 
-        await InsertAuditAsync(connection, transaction, id, "CREATE", request.Applicant, $"发起变更 {changeCode}", now, cancellationToken);
+        await InsertAuditAsync(connection, transaction, id, "CREATE", request.Applicant,
+            $"发起变更 {changeCode}，锁定当前正式版本 #{fromVersionId}", now, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return Ok(new { id, code = changeCode, message = "变更已发起。" });
+        return Ok(new { id, code = changeCode, fromVersionId, message = "变更已发起并锁定当前正式版本。" });
     }
 
     [HttpPost("{id:int}/{action}")]
