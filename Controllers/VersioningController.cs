@@ -32,12 +32,23 @@ public sealed class VersioningController : ControllerBase
 
     [HttpPost("deliverables/{deliverableId:int}/versions")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Editor)]
-    public Task<IActionResult> CreateVersion(
+    public async Task<IActionResult> CreateVersion(
         int deliverableId,
         [FromQuery] string incrementType,
         [FromBody] VersionCreateRequest request,
-        CancellationToken cancellationToken) =>
-        CreateAsync(deliverableId, incrementType, request, null, cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _deliverables.EnsureDirectVersionCreationAllowedAsync(
+                deliverableId,
+                User.IsInRole(AppRoles.Admin),
+                cancellationToken);
+            return await CreateAsync(deliverableId, incrementType, request, null, cancellationToken);
+        }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+        catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
+    }
 
     [HttpPost("changes/{changeId:int}/deliverables/{deliverableId:int}/versions")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Editor)]
