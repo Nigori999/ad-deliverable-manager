@@ -9,13 +9,15 @@ async function renderDeliverables() {
         <div class="field"><label>项目</label><select name="projectId">${optionList(state.master.projects)}</select></div>
         <div class="field"><label>版本状态</label><select name="status"><option value="">全部</option>${['DRAFT','IN_REVIEW','RELEASED','SUPERSEDED','DEPRECATED'].map(x => `<option value="${x}">${statusNames[x]}</option>`).join('')}</select></div>
         <div class="field"><label>私密等级</label><select name="confidentiality"><option value="">全部</option>${state.master.confidentialityLevels.map(x => `<option value="${x.code}">${x.name}</option>`).join('')}</select></div>
+        <div class="field"><label>对外分享</label><select name="sharePolicy"><option value="">全部</option>${state.master.sharePolicies.map(x => `<option value="${x.code}">${x.name}</option>`).join('')}</select></div>
         <button class="btn btn-primary" type="submit">查询</button>
       </form>
-      <div class="card-head"><div class="toolbar"><button id="new-deliverable" class="btn btn-primary">+ 新增交付物</button><button id="reset-filters" class="btn btn-light">重置</button></div><span id="deliverable-total" class="muted"></span></div>
+      <div class="card-head"><div class="toolbar">${canEdit() ? '<button type="button" id="new-deliverable" class="btn btn-primary">+ 新增交付物</button>' : ''}<button type="button" id="export-deliverables" class="btn btn-light">导出CSV</button><button type="button" id="reset-filters" class="btn btn-light">重置</button></div><span id="deliverable-total" class="muted"></span></div>
       <div id="deliverable-list" class="table-wrap"><div class="loading">正在查询…</div></div>
       <div id="deliverable-pagination"></div>
     </section>`;
-  byId('new-deliverable').onclick = openDeliverableForm;
+  if (byId('new-deliverable')) byId('new-deliverable').onclick = openDeliverableForm;
+  byId('export-deliverables').onclick = () => openCsvExport('deliverables', state.lastDeliverableFilters);
   byId('reset-filters').onclick = () => { byId('deliverable-filters').reset(); state.deliverablePage = 1; loadDeliverables(); };
   byId('deliverable-filters').onsubmit = e => { e.preventDefault(); state.deliverablePage = 1; loadDeliverables(); };
   await loadDeliverables();
@@ -25,8 +27,8 @@ async function loadDeliverables() {
   const form = byId('deliverable-filters');
   const params = new URLSearchParams(new FormData(form));
   for (const [key, value] of [...params.entries()]) if (!value) params.delete(key);
+  state.lastDeliverableFilters = Object.fromEntries(params.entries());
   params.set('page', state.deliverablePage); params.set('pageSize', state.deliverablePageSize);
-  state.lastDeliverableQuery = params.toString();
   const data = await api(`/internal/deliverables?${params}`);
   byId('deliverable-total').textContent = `共 ${data.total} 项`;
   byId('deliverable-list').innerHTML = data.items.length ? `
@@ -36,11 +38,11 @@ async function loadDeliverables() {
       <td>${esc(x.department)}<div class="muted">${esc(x.type)}</div></td><td>${esc(x.project)}</td>
       <td>${esc(x.currentVersion || '—')}</td><td>${statusBadge(x.versionStatus || 'DRAFT')}</td><td>${esc(x.responsiblePerson)}</td>
       <td>${esc(confidentialityNames[x.confidentiality] || x.confidentiality)}<div class="muted">${esc(shareNames[x.sharePolicy] || x.sharePolicy)}</div></td>
-      <td>${esc(fmtDate(x.updatedAt))}</td><td><div class="inline-actions"><a class="btn btn-light btn-sm" href="#/deliverables/${x.id}">详情</a>${x.serverPath ? `<button class="btn btn-light btn-sm copy-path" data-path="${esc(x.serverPath)}">复制路径</button>` : ''}</div></td>
+      <td>${esc(fmtDate(x.updatedAt))}</td><td><div class="inline-actions"><a class="btn btn-light btn-sm" href="#/deliverables/${x.id}">详情</a>${x.serverPath ? `<button type="button" class="btn btn-light btn-sm copy-path" data-path="${esc(x.serverPath)}">复制路径</button>` : ''}</div></td>
     </tr>`).join('')}</tbody></table>` : '<div class="empty">没有符合条件的交付物</div>';
   document.querySelectorAll('.copy-path').forEach(btn => btn.onclick = () => copyText(btn.dataset.path));
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
-  byId('deliverable-pagination').innerHTML = `<div class="pagination"><button class="btn btn-light btn-sm" id="prev-page" ${data.page <= 1 ? 'disabled' : ''}>上一页</button><span>第 ${data.page} / ${totalPages} 页</span><button class="btn btn-light btn-sm" id="next-page" ${data.page >= totalPages ? 'disabled' : ''}>下一页</button></div>`;
+  byId('deliverable-pagination').innerHTML = `<div class="pagination"><button type="button" class="btn btn-light btn-sm" id="prev-page" ${data.page <= 1 ? 'disabled' : ''}>上一页</button><span>第 ${data.page} / ${totalPages} 页</span><button type="button" class="btn btn-light btn-sm" id="next-page" ${data.page >= totalPages ? 'disabled' : ''}>下一页</button></div>`;
   byId('prev-page').onclick = () => { state.deliverablePage--; loadDeliverables(); };
   byId('next-page').onclick = () => { state.deliverablePage++; loadDeliverables(); };
 }
@@ -113,26 +115,63 @@ function renderTypeFields(typeCode) {
       <div class="field"><label>刷写方式</label><input name="flashMethod"></div><div class="field"><label>刷写工具</label><input name="flashTool"></div>
       <div class="field span-2"><label>依赖版本说明</label><textarea name="dependencyDescription"></textarea></div>
       <div class="field"><label>Release Note路径</label><input name="releaseNotePath"></div><div class="field"><label>刷写说明路径</label><input name="flashGuidePath"></div>
+      <div class="field span-2"><label>备注</label><textarea name="remark"></textarea></div>
     </div></div>`,
     PRD: `<div class="form-section"><h4>PRD专属信息</h4><div class="form-grid">
       <div class="field"><label>产品模块</label><input name="productModule"></div><div class="field"><label>功能名称</label><input name="functionName"></div>
       <div class="field"><label>需求来源</label><input name="requirementSource"></div><div class="field"><label>目标车型</label><input name="targetVehicle"></div>
       <div class="field"><label>目标产品版本</label><input name="targetProductVersion"></div><div class="field"><label>目标项目节点</label><input name="targetMilestone"></div>
       <div class="field"><label>产品负责人</label><input name="productOwner"></div><div class="field"><label>评审人</label><input name="reviewers"></div>
+      <div class="field span-2"><label>参考依据</label><textarea name="referenceBasis"></textarea></div>
+      <div class="field"><label>范围内</label><textarea name="inScope"></textarea></div><div class="field"><label>范围外</label><textarea name="outOfScope"></textarea></div>
     </div></div>`,
     FR: `<div class="form-section"><h4>FR专属信息</h4><div class="form-grid">
       <div class="field"><label>所属系统</label><input name="systemName"></div><div class="field"><label>所属子系统</label><input name="subsystemName"></div>
       <div class="field"><label>功能模块</label><input name="functionModule"></div><div class="field"><label>上游PRD编码</label><input name="upstreamPrdCode"></div>
       <div class="field"><label>上游PRD版本</label><input name="upstreamPrdVersion"></div><div class="field"><label>目标软件基线</label><input name="targetSoftwareBaseline"></div>
       <div class="field"><label>功能负责人</label><input name="functionOwner"></div><div class="field"><label>系统负责人</label><input name="systemOwner"></div>
+      <div class="field"><label>目标项目节点</label><input name="frTargetMilestone"></div><div class="field"><label>安全等级</label><input name="safetyLevel"></div>
+      <div class="field span-2"><label>接口影响</label><textarea name="interfaceImpact"></textarea></div>
     </div></div>`,
     TC: `<div class="form-section"><h4>测试用例专属信息</h4><div class="form-grid">
       <div class="field"><label>测试级别</label><input name="testLevel"></div><div class="field"><label>测试模块</label><input name="testModule"></div>
       <div class="field"><label>上游FR编码</label><input name="upstreamFrCode"></div><div class="field"><label>上游FR版本</label><input name="upstreamFrVersion"></div>
       <div class="field"><label>用例数量</label><input type="number" min="0" name="caseCount"></div><div class="field"><label>适用软件版本</label><input name="applicableSoftwareVersion"></div>
       <div class="field"><label>自动化用例数</label><input type="number" min="0" name="automatedCaseCount"></div><div class="field"><label>手工用例数</label><input type="number" min="0" name="manualCaseCount"></div>
+      <div class="field"><label>测试负责人</label><input name="testOwner"></div><div class="field"><label>测试环境</label><input name="testEnvironment"></div>
       <div class="field span-2"><label>覆盖场景</label><textarea name="coverageScope"></textarea></div>
     </div></div>`
   };
   root.innerHTML = blocks[typeCode] || '';
+}
+
+function buildVersionPayload(f, typeCode, prefix = '') {
+  const numOrNull = name => f.get(name) ? Number(f.get(name)) : null;
+  const payload = {
+    internalVersion: f.get(prefix + 'internalVersion'), originalVersion: f.get(prefix + 'originalVersion'),
+    originalFileName: f.get(prefix + 'originalFileName'), serverPath: f.get(prefix + 'serverPath'),
+    hashAlgorithm: f.get(prefix + 'hashAlgorithm'), hashValue: f.get(prefix + 'hashValue'),
+    changeSummary: f.get(prefix + 'changeSummary'), author: f.get(prefix + 'author'),
+    plannedReleaseDate: f.get(prefix + 'plannedReleaseDate') || null, operator: operatorName()
+  };
+  if (typeCode === 'SWP') payload.hardware = {
+    hardwareCategory: f.get('hardwareCategory'), hardwareModel: f.get('hardwareModel'), supplierName: f.get('supplierName'),
+    softwarePackageType: f.get('softwarePackageType'), supplierPartNumber: f.get('supplierPartNumber'), internalPartNumber: f.get('internalPartNumber'),
+    compatibleHardwareVersion: f.get('compatibleHardwareVersion'), compatiblePlatform: f.get('compatiblePlatform'), flashMethod: f.get('flashMethod'),
+    flashTool: f.get('flashTool'), dependencyDescription: f.get('dependencyDescription'), releaseNotePath: f.get('releaseNotePath'), flashGuidePath: f.get('flashGuidePath'), remark: f.get('remark')
+  };
+  if (typeCode === 'PRD') payload.prd = {
+    productModule: f.get('productModule'), functionName: f.get('functionName'), requirementSource: f.get('requirementSource'), targetVehicle: f.get('targetVehicle'),
+    targetProductVersion: f.get('targetProductVersion'), targetMilestone: f.get('targetMilestone'), productOwner: f.get('productOwner'), reviewers: f.get('reviewers'), referenceBasis: f.get('referenceBasis'), inScope: f.get('inScope'), outOfScope: f.get('outOfScope')
+  };
+  if (typeCode === 'FR') payload.fr = {
+    systemName: f.get('systemName'), subsystemName: f.get('subsystemName'), functionModule: f.get('functionModule'), upstreamPrdCode: f.get('upstreamPrdCode'),
+    upstreamPrdVersion: f.get('upstreamPrdVersion'), functionOwner: f.get('functionOwner'), systemOwner: f.get('systemOwner'), targetSoftwareBaseline: f.get('targetSoftwareBaseline'), targetMilestone: f.get('frTargetMilestone'), interfaceImpact: f.get('interfaceImpact'), safetyLevel: f.get('safetyLevel')
+  };
+  if (typeCode === 'TC') payload.testCase = {
+    testLevel: f.get('testLevel'), testModule: f.get('testModule'), upstreamFrCode: f.get('upstreamFrCode'), upstreamFrVersion: f.get('upstreamFrVersion'),
+    caseCount: numOrNull('caseCount'), coverageScope: f.get('coverageScope'), testEnvironment: f.get('testEnvironment'), testOwner: f.get('testOwner'), applicableSoftwareVersion: f.get('applicableSoftwareVersion'),
+    automatedCaseCount: numOrNull('automatedCaseCount'), manualCaseCount: numOrNull('manualCaseCount')
+  };
+  return payload;
 }

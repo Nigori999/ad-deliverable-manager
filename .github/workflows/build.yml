@@ -1,27 +1,67 @@
-name: build
+name: Windows 构建与发布
+run-name: "Windows 构建与发布 · ${{ github.ref_name }} · #${{ github.run_number }}"
 
 on:
   push:
     branches: [ main ]
   pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
+  build-and-publish:
+    name: 编译并生成 Windows x64 发布包
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - name: 检出源码
+        uses: actions/checkout@v6
+
+      - name: 检查前端 JavaScript 语法
+        shell: pwsh
+        run: |
+          Get-ChildItem "wwwroot/js/*.js" | ForEach-Object {
+            node --check $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: 配置 .NET 10
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
-      - name: Restore
+
+      - name: 还原项目依赖
         run: dotnet restore
-      - name: Build
+
+      - name: 执行 Release 编译
         run: dotnet build -c Release --no-restore
-      - name: Publish win-x64 self-contained
+
+      - name: 发布 Windows x64 自包含版本
         run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -o publish/win-x64
-      - name: Upload publish artifact
-        uses: actions/upload-artifact@v4
+
+      - name: 生成构建摘要
+        shell: pwsh
+        run: |
+          $exe = Get-Item "publish/win-x64/AdDeliverableManager.exe"
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash
+          @(
+            "## Windows x64 发布包"
+            "- 触发分支：${{ github.ref_name }}"
+            "- 程序文件：$($exe.Name)"
+            "- EXE SHA-256：$hash"
+            "- 下载位置：本次运行页面底部的 Artifacts"
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: 上传 Windows 发布包
+        uses: actions/upload-artifact@v7
         with:
           name: AdDeliverableManager-win-x64
           path: publish/win-x64
+          if-no-files-found: error
+          retention-days: 30

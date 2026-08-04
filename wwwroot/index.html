@@ -4,10 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>智驾中心交付物管理系统</title>
-  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/styles.css?v=0.7.2">
+  <link rel="stylesheet" href="/css/v070.css?v=0.7.2">
 </head>
 <body>
-  <div class="app-shell">
+  <div id="auth-root"></div>
+  <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">AD</div>
@@ -17,22 +19,21 @@
         <a href="#/dashboard" data-route="dashboard"><span>◫</span>仪表盘</a>
         <a href="#/deliverables" data-route="deliverables"><span>▤</span>交付物台账</a>
         <a href="#/changes" data-route="changes"><span>↻</span>变更管理</a>
+        <a href="#/analytics" data-route="analytics"><span>◩</span>完整度分析</a>
+        <a href="#/users" data-route="users" data-role="ADMIN"><span>♙</span>用户管理</a>
         <a href="#/settings" data-route="settings"><span>⚙</span>基础设置</a>
       </nav>
-      <div class="sidebar-foot">
-        <span class="status-dot"></span>本地SQLite运行
-      </div>
+      <div class="sidebar-foot"><span class="status-dot"></span>SQLite本地运行</div>
     </aside>
 
     <div class="workspace">
       <header class="topbar">
-        <div>
-          <h1 id="page-title">仪表盘</h1>
-          <p id="page-subtitle">统一管理交付物、版本和变更记录</p>
-        </div>
+        <div><h1 id="page-title">仪表盘</h1><p id="page-subtitle">统一管理交付物、版本和变更记录</p></div>
         <div class="topbar-actions">
-          <label class="operator-field">当前操作人<input id="operator-name" maxlength="30" value="系统用户"></label>
-          <button class="btn btn-light" id="global-refresh">刷新</button>
+          <div class="user-chip"><strong id="current-user-name">—</strong><span id="current-user-role">—</span></div>
+          <button class="btn btn-light" type="button" id="change-password">修改密码</button>
+          <button class="btn btn-light" type="button" id="global-refresh">刷新</button>
+          <button class="btn btn-light" type="button" id="logout-button">退出</button>
         </div>
       </header>
       <main id="app-content" class="content"><div class="loading">正在加载…</div></main>
@@ -40,11 +41,20 @@
   </div>
 
   <div id="modal-root"></div>
+  <div id="drawer-root"></div>
   <div id="toast-root" class="toast-root"></div>
-  <script src="/js/core.js"></script>
-  <script src="/js/dashboard.js"></script>
-  <script src="/js/deliverables-list.js"></script>
-  <script src="/js/deliverables-detail.js"></script>
-  <script src="/js/changes-settings.js"></script>
+  <script src="/js/core.js?v=0.7.2"></script>
+  <script src="/js/auth.js?v=0.7.2"></script>
+  <script src="/js/dashboard.js?v=0.7.2"></script>
+  <script src="/js/deliverables-list.js?v=0.7.2"></script>
+  <script src="/js/deliverables-detail.js?v=0.7.2"></script>
+  <script src="/js/changes-settings.js?v=0.7.2"></script>
+  <script src="/js/analytics.js?v=0.7.2"></script>
+  <script src="/js/users.js?v=0.7.2"></script>
+  <script src="/js/v061-fixes.js?v=0.7.2"></script>
+  <script src="/js/v070.js?v=0.7.2"></script>
+  <script src="/js/v070-tooltip-fallback.js?v=0.7.2"></script>
+  <script src="/js/v071.js?v=0.7.2"></script>
+  <script src="/js/v072.js?v=0.7.2"></script>
 </body>
 </html>

@@ -225,6 +225,22 @@ CREATE TABLE IF NOT EXISTS AuditLogs (
     CreatedAt TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS Users (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    Username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    DisplayName TEXT NOT NULL,
+    PasswordHash TEXT NOT NULL,
+    PasswordSalt TEXT NOT NULL,
+    RoleCode TEXT NOT NULL CHECK(RoleCode IN ('ADMIN','EDITOR','APPROVER','VIEWER')),
+    IsEnabled INTEGER NOT NULL DEFAULT 1,
+    MustChangePassword INTEGER NOT NULL DEFAULT 0,
+    LastLoginAt TEXT,
+    CreatedBy TEXT NOT NULL,
+    CreatedAt TEXT NOT NULL,
+    UpdatedAt TEXT NOT NULL,
+    Revision INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE INDEX IF NOT EXISTS IX_Deliverables_DepartmentId ON Deliverables(DepartmentId);
 CREATE INDEX IF NOT EXISTS IX_Deliverables_ProjectId ON Deliverables(ProjectId);
 CREATE INDEX IF NOT EXISTS IX_Deliverables_TypeId ON Deliverables(DeliverableTypeId);
@@ -233,6 +249,11 @@ CREATE INDEX IF NOT EXISTS IX_Versions_DeliverableId ON DeliverableVersions(Deli
 CREATE INDEX IF NOT EXISTS IX_Versions_Status ON DeliverableVersions(VersionStatus);
 CREATE INDEX IF NOT EXISTS IX_Versions_ReleaseDate ON DeliverableVersions(ReleaseDate);
 CREATE INDEX IF NOT EXISTS IX_Changes_Status ON ChangeRecords(ChangeStatus);
+CREATE INDEX IF NOT EXISTS IX_Users_RoleCode ON Users(RoleCode);
+CREATE INDEX IF NOT EXISTS IX_Users_IsEnabled ON Users(IsEnabled);
+CREATE INDEX IF NOT EXISTS IX_Relations_Source ON DeliverableRelations(SourceDeliverableId);
+CREATE INDEX IF NOT EXISTS IX_Relations_Target ON DeliverableRelations(TargetDeliverableId);
+CREATE INDEX IF NOT EXISTS IX_Relations_Type ON DeliverableRelations(RelationType);
 
 INSERT OR IGNORE INTO Departments (DepartmentCode, DepartmentName, SortOrder, IsEnabled, CreatedAt) VALUES
 ('HW', '硬件部门', 10, 1, datetime('now')),
