@@ -2,9 +2,6 @@ namespace AdDeliverableManager.Services;
 
 public sealed partial class DeliverableRepository
 {
-    private static readonly string[] FormalBaselineStatuses =
-        ["RELEASED", "SUPERSEDED", "DEPRECATED"];
-
     public async Task<bool> HasFormalBaselineAsync(
         int deliverableId,
         CancellationToken cancellationToken = default)
@@ -23,10 +20,34 @@ public sealed partial class DeliverableRepository
         command.CommandText = """
             SELECT COUNT(*) FROM DeliverableVersions
             WHERE DeliverableId=$id
-              AND (VersionStatus IN ('RELEASED','SUPERSEDED','DEPRECATED') OR ReleaseDate IS NOT NULL);
+              AND (VersionStatus IN ('RELEASED','SUPERSEDED') OR ReleaseDate IS NOT NULL);
             """;
         command.Parameters.AddValue("$id", deliverableId);
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) > 0;
+    }
+
+    public async Task EnsureNoOpenVersionCycleAsync(
+        int deliverableId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _database.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT InternalVersion,VersionStatus
+            FROM DeliverableVersions
+            WHERE DeliverableId=$id AND VersionStatus IN ('DRAFT','IN_REVIEW')
+            ORDER BY CreatedAt DESC,Id DESC
+            LIMIT 1;
+            """;
+        command.Parameters.AddValue("$id", deliverableId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return;
+
+        var version = reader.GetString(0);
+        var status = reader.GetString(1);
+        var statusName = status == "DRAFT" ? "草稿" : "审批中";
+        throw new InvalidOperationException(
+            $"当前版本 {version} 仍处于“{statusName}”状态，审批流程完成前不能创建后续版本。");
     }
 
     public async Task EnsureDirectVersionCreationAllowedAsync(
@@ -34,9 +55,11 @@ public sealed partial class DeliverableRepository
         bool administratorOverride,
         CancellationToken cancellationToken = default)
     {
+        await EnsureNoOpenVersionCycleAsync(deliverableId, cancellationToken);
+
         if (administratorOverride)
         {
-            // 管理员保留历史数据补录和特殊纠错能力，但前端会明确标注该入口不是正常迭代流程。
+            // 管理员保留历史数据补录和特殊纠错能力，但同样不能绕过未完成审批版本的互斥规则。
             await HasFormalBaselineAsync(deliverableId, cancellationToken);
             return;
         }
