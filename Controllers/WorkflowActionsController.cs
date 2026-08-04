@@ -32,6 +32,12 @@ public sealed class WorkflowActionsController : ControllerBase
         CancellationToken cancellationToken) =>
         RunVersionActionAsync(versionId, "return-draft", request, true, cancellationToken);
 
+    [HttpPost("versions/{versionId:int}/approve")]
+    [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Approver)]
+    public Task<IActionResult> ApproveVersion(int versionId, [FromBody] LifecycleActionRequest request,
+        CancellationToken cancellationToken) =>
+        RunVersionActionAsync(versionId, "approve", request, true, cancellationToken);
+
     [HttpPost("versions/{versionId:int}/release")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Approver)]
     public Task<IActionResult> ReleaseVersion(int versionId, [FromBody] LifecycleActionRequest request,
@@ -82,7 +88,7 @@ public sealed class WorkflowActionsController : ControllerBase
         try
         {
             request.Operator = User.GetDisplayName();
-            var status = await _deliverables.TransitionVersionAsync(versionId, action, request, cancellationToken);
+            var status = await _deliverables.TransitionVersionV072Async(versionId, action, request, cancellationToken);
             return Ok(new { status, message = "版本状态已更新。" });
         }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
