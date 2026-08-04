@@ -79,7 +79,7 @@ public sealed class DeliverablesController : ControllerBase
                 User.IsInRole(AppRoles.Admin),
                 cancellationToken);
             request.Operator = User.GetDisplayName();
-            var versionId = await _repository.AddVersionAsync(id, request, cancellationToken);
+            var versionId = await _repository.AddVersionWithOpenCyclePolicyAsync(id, request, cancellationToken);
             return Ok(new { id = versionId, message = "新版本已创建为草稿。" });
         }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
@@ -92,16 +92,16 @@ public sealed class DeliverablesController : ControllerBase
     public async Task<IActionResult> VersionAction(int versionId, string action, [FromBody] LifecycleActionRequest request, CancellationToken cancellationToken)
     {
         var normalized = action.ToLowerInvariant();
-        var allowed = new[] { "submit-review", "return-draft", "release", "deprecate" };
+        var allowed = new[] { "submit-review", "return-draft", "approve", "release", "deprecate" };
         if (!allowed.Contains(normalized, StringComparer.Ordinal)) return BadRequest(new { message = "不支持的版本操作。" });
         if (!CanRunVersionAction(normalized)) return Forbid();
-        if ((normalized is "return-draft" or "release" or "deprecate") && string.IsNullOrWhiteSpace(request.Reason))
-            return BadRequest(new { message = "退回、发布或废止时必须填写处理意见。" });
+        if ((normalized is "return-draft" or "approve" or "release" or "deprecate") && string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest(new { message = "退回、审批通过、发布或废止时必须填写处理意见。" });
 
         try
         {
             request.Operator = User.GetDisplayName();
-            var status = await _repository.TransitionVersionAsync(versionId, normalized, request, cancellationToken);
+            var status = await _repository.TransitionVersionV072Async(versionId, normalized, request, cancellationToken);
             return Ok(new { status, message = "版本状态已更新。" });
         }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
@@ -127,7 +127,7 @@ public sealed class DeliverablesController : ControllerBase
         return action switch
         {
             "submit-review" => User.IsInRole(AppRoles.Editor),
-            "return-draft" or "release" or "deprecate" => User.IsInRole(AppRoles.Approver),
+            "return-draft" or "approve" or "release" or "deprecate" => User.IsInRole(AppRoles.Approver),
             _ => false
         };
     }
