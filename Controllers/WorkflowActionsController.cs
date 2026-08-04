@@ -22,75 +22,52 @@ public sealed class WorkflowActionsController : ControllerBase
 
     [HttpPost("versions/{versionId:int}/submit-review")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Editor)]
-    public Task<IActionResult> SubmitVersionReview(
-        int versionId,
-        [FromBody] LifecycleActionRequest request,
+    public Task<IActionResult> SubmitVersionReview(int versionId, [FromBody] LifecycleActionRequest request,
         CancellationToken cancellationToken) =>
         RunVersionActionAsync(versionId, "submit-review", request, false, cancellationToken);
 
     [HttpPost("versions/{versionId:int}/return-draft")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Approver)]
-    public Task<IActionResult> ReturnVersionToDraft(
-        int versionId,
-        [FromBody] LifecycleActionRequest request,
+    public Task<IActionResult> ReturnVersionToDraft(int versionId, [FromBody] LifecycleActionRequest request,
         CancellationToken cancellationToken) =>
         RunVersionActionAsync(versionId, "return-draft", request, true, cancellationToken);
 
     [HttpPost("versions/{versionId:int}/release")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Approver)]
-    public Task<IActionResult> ReleaseVersion(
-        int versionId,
-        [FromBody] LifecycleActionRequest request,
+    public Task<IActionResult> ReleaseVersion(int versionId, [FromBody] LifecycleActionRequest request,
         CancellationToken cancellationToken) =>
         RunVersionActionAsync(versionId, "release", request, true, cancellationToken);
 
     [HttpPost("versions/{versionId:int}/deprecate")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Approver)]
-    public Task<IActionResult> DeprecateVersion(
-        int versionId,
-        [FromBody] LifecycleActionRequest request,
+    public Task<IActionResult> DeprecateVersion(int versionId, [FromBody] LifecycleActionRequest request,
         CancellationToken cancellationToken) =>
         RunVersionActionAsync(versionId, "deprecate", request, true, cancellationToken);
 
     [HttpPost("changes/{id:int}/approve")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Approver)]
-    public Task<IActionResult> ApproveChange(
-        int id,
-        [FromBody] ChangeActionRequest request,
-        CancellationToken cancellationToken) =>
-        RunChangeActionAsync(id, "approve", request, cancellationToken);
+    public Task<IActionResult> ApproveChange(int id, [FromBody] ChangeActionRequest request,
+        CancellationToken cancellationToken) => RunChangeActionAsync(id, "approve", request, cancellationToken);
 
     [HttpPost("changes/{id:int}/reject")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Approver)]
-    public Task<IActionResult> RejectChange(
-        int id,
-        [FromBody] ChangeActionRequest request,
-        CancellationToken cancellationToken) =>
-        RunChangeActionAsync(id, "reject", request, cancellationToken);
+    public Task<IActionResult> RejectChange(int id, [FromBody] ChangeActionRequest request,
+        CancellationToken cancellationToken) => RunChangeActionAsync(id, "reject", request, cancellationToken);
 
     [HttpPost("changes/{id:int}/start")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Editor)]
-    public Task<IActionResult> StartChange(
-        int id,
-        [FromBody] ChangeActionRequest request,
-        CancellationToken cancellationToken) =>
-        RunChangeActionAsync(id, "start", request, cancellationToken);
+    public Task<IActionResult> StartChange(int id, [FromBody] ChangeActionRequest request,
+        CancellationToken cancellationToken) => RunChangeActionAsync(id, "start", request, cancellationToken);
 
     [HttpPost("changes/{id:int}/verify")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Editor)]
-    public Task<IActionResult> VerifyChange(
-        int id,
-        [FromBody] ChangeActionRequest request,
-        CancellationToken cancellationToken) =>
-        RunChangeActionAsync(id, "verify", request, cancellationToken);
+    public Task<IActionResult> VerifyChange(int id, [FromBody] ChangeActionRequest request,
+        CancellationToken cancellationToken) => RunChangeActionAsync(id, "verify", request, cancellationToken);
 
     [HttpPost("changes/{id:int}/close")]
     [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Approver)]
-    public Task<IActionResult> CloseChange(
-        int id,
-        [FromBody] ChangeActionRequest request,
-        CancellationToken cancellationToken) =>
-        RunChangeActionAsync(id, "close", request, cancellationToken);
+    public Task<IActionResult> CloseChange(int id, [FromBody] ChangeActionRequest request,
+        CancellationToken cancellationToken) => RunChangeActionAsync(id, "close", request, cancellationToken);
 
     private async Task<IActionResult> RunVersionActionAsync(
         int versionId,
@@ -137,13 +114,35 @@ public sealed class WorkflowActionsController : ControllerBase
         using var transaction = connection.BeginTransaction();
         var now = DateTime.UtcNow.ToString("O");
 
+        if (action is "verify" or "close")
+        {
+            await using var linkCheck = connection.CreateCommand();
+            linkCheck.Transaction = transaction;
+            linkCheck.CommandText = """
+                SELECT c.ChangeStatus,c.ToVersionId,v.InternalVersion,v.VersionStatus
+                FROM ChangeRecords c LEFT JOIN DeliverableVersions v ON v.Id=c.ToVersionId
+                WHERE c.Id=$id;
+                """;
+            linkCheck.Parameters.AddValue("$id", id);
+            await using var reader = await linkCheck.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken)) return NotFound(new { message = "变更记录不存在。" });
+            if (!string.Equals(reader.GetString(0), transition.Required, StringComparison.Ordinal))
+                return Conflict(new { message = "当前状态不允许执行该操作，请刷新后重试。" });
+            if (reader.IsDBNull(1))
+                return BadRequest(new { message = "请先创建并关联变更后版本，再提交验证。" });
+            if (action == "close" && (reader.IsDBNull(3) || reader.GetString(3) != "RELEASED"))
+            {
+                var version = reader.IsDBNull(2) ? "变更版本" : reader.GetString(2);
+                return BadRequest(new { message = $"{version}尚未正式发布，不能关闭变更。" });
+            }
+        }
+
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
             UPDATE ChangeRecords SET ChangeStatus=$target,
                 Reviewer=CASE WHEN $target IN ('APPROVED','REJECTED') THEN $operator ELSE Reviewer END,
                 ReviewOpinion=CASE WHEN $target IN ('APPROVED','REJECTED') THEN $opinion ELSE ReviewOpinion END,
-                ToVersionId=COALESCE($toVersionId,ToVersionId),
                 ActualCompletionDate=CASE WHEN $target='CLOSED' THEN $now ELSE ActualCompletionDate END,
                 UpdatedAt=$now
             WHERE Id=$id AND ChangeStatus=$required;
@@ -151,7 +150,6 @@ public sealed class WorkflowActionsController : ControllerBase
         command.Parameters.AddValue("$target", transition.Target);
         command.Parameters.AddValue("$operator", request.Operator);
         command.Parameters.AddValue("$opinion", request.Opinion);
-        command.Parameters.AddValue("$toVersionId", request.ToVersionId);
         command.Parameters.AddValue("$now", now);
         command.Parameters.AddValue("$id", id);
         command.Parameters.AddValue("$required", transition.Required);
