@@ -23,6 +23,14 @@ jobs:
       - name: 检出源码
         uses: actions/checkout@v4
 
+      - name: 检查前端 JavaScript 语法
+        shell: pwsh
+        run: |
+          Get-ChildItem "wwwroot/js/*.js" | ForEach-Object {
+            node --check $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
       - name: 配置 .NET 10
         uses: actions/setup-dotnet@v4
         with:
