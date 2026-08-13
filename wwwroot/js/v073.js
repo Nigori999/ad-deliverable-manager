@@ -80,8 +80,6 @@ async function openVersionDetailsV073(versionId) {
       <div class="info-grid">${commonHtml}</div>
       ${specificHtml ? `<h4 style="margin:22px 0 10px">${esc(data.common.typeName || '类型专属信息')}</h4><div class="info-grid">${specificHtml}</div>` : ''}`;
     showModal('版本详情', body, { submitText: '关闭', onSubmit: async close => close() });
-    const submit = modalRoot.querySelector('.modal-submit');
-    if (submit) submit.textContent = '关闭';
   } catch (error) {
     toast(error.message, 'error');
   }
