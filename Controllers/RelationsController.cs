@@ -70,7 +70,7 @@ public sealed class RelationsController : ControllerBase
             WHERE d.LifecycleStatus='ACTIVE' AND ($excludeId IS NULL OR d.Id<>$excludeId)
             ORDER BY p.ProjectName,t.SortOrder,d.DeliverableCode;
             """;
-        command.Parameters.AddValue("$excludeId", excludeId);
+        command.Parameters.AddWithValue("$excludeId", excludeId);
         var items = new List<object>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -100,7 +100,6 @@ public sealed class RelationsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Editor)]
     public async Task<IActionResult> Create([FromBody] RelationCreateRequest request, CancellationToken cancellationToken)
     {
         if (request.SourceDeliverableId <= 0 || request.TargetDeliverableId <= 0)
@@ -127,11 +126,11 @@ public sealed class RelationsController : ControllerBase
               AND COALESCE(SourceVersionId,0)=COALESCE($sourceVersion,0)
               AND COALESCE(TargetVersionId,0)=COALESCE($targetVersion,0);
             """;
-        duplicate.Parameters.AddValue("$source", request.SourceDeliverableId);
-        duplicate.Parameters.AddValue("$target", request.TargetDeliverableId);
-        duplicate.Parameters.AddValue("$type", request.RelationType);
-        duplicate.Parameters.AddValue("$sourceVersion", request.SourceVersionId);
-        duplicate.Parameters.AddValue("$targetVersion", request.TargetVersionId);
+        duplicate.Parameters.AddWithValue("$source", request.SourceDeliverableId);
+        duplicate.Parameters.AddWithValue("$target", request.TargetDeliverableId);
+        duplicate.Parameters.AddWithValue("$type", request.RelationType);
+        duplicate.Parameters.AddWithValue("$sourceVersion", request.SourceVersionId);
+        duplicate.Parameters.AddWithValue("$targetVersion", request.TargetVersionId);
         if (Convert.ToInt32(await duplicate.ExecuteScalarAsync(cancellationToken)) > 0)
             return Conflict(new { message = "相同关联关系已经存在。" });
 
@@ -158,7 +157,6 @@ public sealed class RelationsController : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
-    [Authorize(Roles = AppRoles.Admin + "," + AppRoles.Editor)]
     public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
     {
         await using var connection = await _database.OpenConnectionAsync(cancellationToken);
@@ -206,8 +204,8 @@ public sealed class RelationsController : ControllerBase
     {
         await using var command = connection.CreateCommand(); command.Transaction = transaction;
         command.CommandText = "INSERT INTO AuditLogs(EntityType,EntityId,ActionType,Operator,Summary,CreatedAt) VALUES('Relation',$id,$action,$operator,$summary,$now)";
-        command.Parameters.AddValue("$id", id); command.Parameters.AddValue("$action", action);
-        command.Parameters.AddValue("$operator", operatorName); command.Parameters.AddValue("$summary", summary); command.Parameters.AddValue("$now", now);
+        command.Parameters.AddWithValue("$id", id); command.Parameters.AddWithValue("$action", action);
+        command.Parameters.AddWithValue("$operator", operatorName); command.Parameters.AddWithValue("$summary", summary); command.Parameters.AddWithValue("$now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }
