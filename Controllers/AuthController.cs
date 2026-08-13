@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using AdDeliverableManager.Models;
+using AdDeliverableManager.Security;
 using AdDeliverableManager.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
