@@ -29,6 +29,9 @@ public sealed partial class DeliverableRepository
         throw new InvalidOperationException($"当前版本 {version} 仍处于“{statusName}”状态，审批流程完成前不能创建后续版本。");
     }
 
+    public Task EnsureDirectVersionCreationAllowedAsync(int deliverableId, bool _, CancellationToken cancellationToken = default)
+        => EnsureDirectVersionCreationAllowedAsync(deliverableId, cancellationToken);
+
     public async Task EnsureDirectVersionCreationAllowedAsync(int deliverableId, CancellationToken cancellationToken = default)
     {
         await EnsureNoOpenVersionCycleAsync(deliverableId, cancellationToken);
