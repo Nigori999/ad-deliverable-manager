@@ -101,7 +101,7 @@ public sealed class DeliverablesController : ControllerBase
         try
         {
             request.Operator = User.GetDisplayName();
-            var status = await _repository.TransitionVersionV072Async(versionId, normalized, request, cancellationToken);
+            var status = await _repository.TransitionVersionV073Async(versionId, normalized, request, cancellationToken);
             return Ok(new { status, message = "版本状态已更新。" });
         }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
