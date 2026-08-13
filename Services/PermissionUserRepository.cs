@@ -1,4 +1,5 @@
 using AdDeliverableManager.Models;
+using AdDeliverableManager.Security;
 using Microsoft.Data.Sqlite;
 
 namespace AdDeliverableManager.Services;
