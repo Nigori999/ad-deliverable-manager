@@ -88,7 +88,7 @@ public sealed class WorkflowActionsController : ControllerBase
         try
         {
             request.Operator = User.GetDisplayName();
-            var status = await _deliverables.TransitionVersionV072Async(versionId, action, request, cancellationToken);
+            var status = await _deliverables.TransitionVersionV073Async(versionId, action, request, cancellationToken);
             return Ok(new { status, message = "版本状态已更新。" });
         }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
