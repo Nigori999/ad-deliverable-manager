@@ -32,20 +32,3 @@ public sealed class DataScopeGrant
     public string ScopeType { get; set; } = "ALL";
     public string ScopeValue { get; set; } = "";
 }
-
-public sealed class UserCreateV08Request
-{
-    public string Username { get; set; } = "";
-    public string DisplayName { get; set; } = "";
-    public string Password { get; set; } = "";
-    public int[] RoleIds { get; set; } = [];
-    public bool MustChangePassword { get; set; } = true;
-}
-
-public sealed class UserUpdateV08Request
-{
-    public string DisplayName { get; set; } = "";
-    public int[] RoleIds { get; set; } = [];
-    public bool IsEnabled { get; set; } = true;
-    public int Revision { get; set; }
-}
