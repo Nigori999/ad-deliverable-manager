@@ -6,7 +6,6 @@ public sealed record UserRecord(
     string DisplayName,
     string PasswordHash,
     string PasswordSalt,
-    string RoleCode,
     bool IsEnabled,
     bool MustChangePassword,
     string? LastLoginAt,
