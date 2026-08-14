@@ -36,3 +36,35 @@ async function openRoleV08Edit(id){
     close();toast('角色权限已保存。');await renderRoles();
   }});
 }
+
+// Final V0.9 UI guard: after every script has loaded, remove the remaining
+// dependency on legacy canEdit() checks in the list renderer and enforce the
+// canonical Permission Code for create/export entry points.
+setTimeout(() => {
+  const originalRenderDeliverables = window.renderDeliverables;
+  if (typeof originalRenderDeliverables === 'function' && !originalRenderDeliverables.__v09PermissionWrapped) {
+    const wrapped = async function () {
+      await originalRenderDeliverables();
+      const toolbar = byId('new-deliverable')?.parentElement || content.querySelector('.card-head .toolbar');
+      if (toolbar && hasPermission('DELIVERY_CREATE') && !byId('new-deliverable')) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.id = 'new-deliverable'; button.className = 'btn btn-primary'; button.textContent = '+ 新增交付物';
+        button.onclick = openDeliverableForm; toolbar.prepend(button);
+      }
+      const exportButton = byId('export-deliverables');
+      if (exportButton) exportButton.classList.toggle('hidden', !hasPermission('DELIVERY_EXPORT'));
+    };
+    wrapped.__v09PermissionWrapped = true;
+    window.renderDeliverables = wrapped;
+  }
+  const originalRenderChanges = window.renderChanges;
+  if (typeof originalRenderChanges === 'function' && !originalRenderChanges.__v09PermissionWrapped) {
+    const wrapped = async function () {
+      await originalRenderChanges();
+      const exportButton = byId('export-changes');
+      if (exportButton) exportButton.classList.toggle('hidden', !hasPermission('CHANGE_EXPORT'));
+    };
+    wrapped.__v09PermissionWrapped = true;
+    window.renderChanges = wrapped;
+  }
+}, 0);
