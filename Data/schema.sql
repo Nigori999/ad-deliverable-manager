@@ -34,3 +34,4 @@ INSERT OR IGNORE INTO DeliverableTypes(TypeCode,TypeName,DepartmentId,HasHardwar
 INSERT OR IGNORE INTO DeliverableTypes(TypeCode,TypeName,DepartmentId,HasHardwareFields,SortOrder,IsEnabled) SELECT 'PRD','产品需求文档',Id,0,20,1 FROM Departments WHERE DepartmentCode='PROD';
 INSERT OR IGNORE INTO DeliverableTypes(TypeCode,TypeName,DepartmentId,HasHardwareFields,SortOrder,IsEnabled) SELECT 'FR','功能需求文档',Id,0,30,1 FROM Departments WHERE DepartmentCode='SYS';
 INSERT OR IGNORE INTO DeliverableTypes(TypeCode,TypeName,DepartmentId,HasHardwareFields,SortOrder,IsEnabled) SELECT 'TC','测试用例',Id,0,40,1 FROM Departments WHERE DepartmentCode='TEST';
+INSERT OR IGNORE INTO DeliverableTypes(TypeCode,TypeName,DepartmentId,HasHardwareFields,SortOrder,IsEnabled) SELECT 'TR','测试报告',Id,0,50,1 FROM Departments WHERE DepartmentCode='TEST';
