@@ -30,6 +30,41 @@ public sealed class PermissionService
     public async Task<IReadOnlyList<int>> GetAllowedDeliverableIdsAsync(int userId,string permissionCode,CancellationToken ct=default)
     {await using var c=await _database.OpenConnectionAsync(ct);var roles=await GetRoleIdsAsync(c,userId,ct);if(roles.Count==0)return [];var csv=string.Join(',',roles);await using var s=c.CreateCommand();s.CommandText=$"SELECT COUNT(*) FROM RoleDataScopes WHERE RoleId IN ({csv})";if(Convert.ToInt32(await s.ExecuteScalarAsync(ct))==0)return [];var ids=new List<int>();await using var d=c.CreateCommand();d.CommandText="SELECT Id FROM Deliverables WHERE LifecycleStatus <> 'ARCHIVED'";await using var r=await d.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct)){var id=r.GetInt32(0);if(await HasPermissionAsync(userId,permissionCode,deliverableId:id,ct:ct))ids.Add(id);}return ids;}
 
+    // SQL predicate for collection queries. It implements the same rule as MatchesDataScopeAsync:
+    // a user may access a deliverable when at least one enabled role has explicit scopes, and every
+    // dimension configured on that role is satisfied by ALL or a matching INCLUDE value.
+    // The caller must add parameter $scopeUserId with the current user id.
+    public static string BuildDataScopePredicate(string deliverableAlias="d") => $"""
+        EXISTS (
+            SELECT 1
+            FROM UserRoles ur
+            JOIN Roles role ON role.Id=ur.RoleId
+            WHERE ur.UserId=$scopeUserId AND role.IsEnabled=1
+              AND EXISTS (SELECT 1 FROM RoleDataScopes rs0 WHERE rs0.RoleId=role.Id)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM RoleDataScopes dim
+                  WHERE dim.RoleId=role.Id
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM RoleDataScopes match
+                        WHERE match.RoleId=role.Id
+                          AND match.Dimension=dim.Dimension
+                          AND (
+                              UPPER(match.ScopeType)='ALL'
+                              OR (UPPER(match.ScopeType)='INCLUDE' AND match.ScopeValue=CASE UPPER(dim.Dimension)
+                                  WHEN 'DEPARTMENT' THEN CAST({deliverableAlias}.DepartmentId AS TEXT)
+                                  WHEN 'PROJECT' THEN CAST({deliverableAlias}.ProjectId AS TEXT)
+                                  WHEN 'TYPE' THEN CAST({deliverableAlias}.DeliverableTypeId AS TEXT)
+                                  WHEN 'OWNER' THEN {deliverableAlias}.ResponsiblePerson
+                                  WHEN 'HARDWARE_CATEGORY' THEN COALESCE((SELECT h.HardwareCategory FROM DeliverableVersions hv LEFT JOIN HardwarePackageDetails h ON h.VersionId=hv.Id WHERE hv.Id={deliverableAlias}.CurrentVersionId),'')
+                                  ELSE '' END)
+                          )
+                    )
+              )
+        )
+        """;
+
     private static async Task<List<int>> GetRoleIdsAsync(SqliteConnection c,int userId,CancellationToken ct){await using var cmd=c.CreateCommand();cmd.CommandText="SELECT RoleId FROM UserRoles ur JOIN Roles r ON r.Id=ur.RoleId WHERE ur.UserId=$id AND r.IsEnabled=1";cmd.Parameters.AddWithValue("$id",userId);var ids=new List<int>();await using var r=await cmd.ExecuteReaderAsync(ct);while(await r.ReadAsync(ct))ids.Add(r.GetInt32(0));return ids;}
     private static async Task<bool> MatchesDataScopeAsync(SqliteConnection c,List<int> roleIds,int deliverableId,CancellationToken ct){var csv=string.Join(',',roleIds);await using var cmd=c.CreateCommand();cmd.CommandText="SELECT d.DepartmentId,d.ProjectId,d.DeliverableTypeId,d.ResponsiblePerson,h.HardwareCategory FROM Deliverables d LEFT JOIN DeliverableVersions v ON v.Id=d.CurrentVersionId LEFT JOIN HardwarePackageDetails h ON h.VersionId=v.Id WHERE d.Id=$id";cmd.Parameters.AddWithValue("$id",deliverableId);await using var r=await cmd.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))return false;var dims=new Dictionary<string,string>{{"DEPARTMENT",r.GetInt32(0).ToString()},{"PROJECT",r.GetInt32(1).ToString()},{"TYPE",r.GetInt32(2).ToString()},{"OWNER",r.GetString(3)},{"HARDWARE_CATEGORY",r.IsDBNull(4)?"":r.GetString(4)}};await r.DisposeAsync();foreach(var roleId in roleIds){await using var q=c.CreateCommand();q.CommandText="SELECT Dimension,ScopeType,ScopeValue FROM RoleDataScopes WHERE RoleId=$role";q.Parameters.AddWithValue("$role",roleId);var scopes=new List<(string d,string t,string v)>();await using var sr=await q.ExecuteReaderAsync(ct);while(await sr.ReadAsync(ct))scopes.Add((sr.GetString(0),sr.GetString(1),sr.GetString(2)));if(scopes.Count==0)continue;var ok=true;foreach(var g in scopes.GroupBy(x=>x.d,StringComparer.OrdinalIgnoreCase)){if(g.Any(x=>x.t.Equals("ALL",StringComparison.OrdinalIgnoreCase)))continue;if(!g.Any(x=>x.t.Equals("INCLUDE",StringComparison.OrdinalIgnoreCase)&&dims.TryGetValue(g.Key,out var value)&&!string.IsNullOrWhiteSpace(value)&&x.v.Equals(value,StringComparison.OrdinalIgnoreCase))){ok=false;break;}}if(ok)return true;}return false;}
 }
