@@ -6,7 +6,7 @@ async function renderChanges() {
   content.innerHTML = `<section class="card">
     <div class="card-head">
       <div class="toolbar">
-        ${canEdit() ? '<button type="button" id="new-change" class="btn btn-primary">+ 发起变更</button>' : ''}
+        ${hasPermission('CHANGE_CREATE') ? '<button type="button" id="new-change" class="btn btn-primary">+ 发起变更</button>' : ''}
         <button type="button" id="export-changes" class="btn btn-light">导出CSV</button>
         <label class="inline-filter">状态<select id="change-status-filter">${statusOptions.map(x => `<option value="${x}" ${x === status ? 'selected' : ''}>${x ? statusNames[x] : '全部'}</option>`).join('')}</select></label>
       </div>
@@ -27,7 +27,7 @@ async function renderChanges() {
     </div>
   </section>`;
 
-  if (canEdit()) byId('new-change').onclick = openChangeForm;
+  if (hasPermission('CHANGE_CREATE')) byId('new-change').onclick = openChangeForm;
   byId('export-changes').onclick = () => openCsvExport('changes', { status: state.changeStatusFilter || null });
   byId('change-status-filter').onchange = event => { state.changeStatusFilter = event.target.value; renderChanges(); };
   document.querySelectorAll('[data-change-action]').forEach(btn => btn.onclick = () => runChangeAction(btn));
@@ -35,12 +35,12 @@ async function renderChanges() {
 
 function changeActionButtons(x) {
   const buttons = [];
-  if (x.status === 'PENDING_ASSESSMENT' && canApprove()) {
+  if (x.status === 'PENDING_ASSESSMENT' && hasPermission('CHANGE_APPROVE')) {
     buttons.push(['approve', '批准', 'btn-primary'], ['reject', '驳回', 'btn-danger']);
   }
-  if (x.status === 'APPROVED' && canEdit()) buttons.push(['start', '开始实施', 'btn-light']);
-  if (x.status === 'IMPLEMENTING' && canEdit()) buttons.push(['verify', '提交验证', 'btn-light']);
-  if (x.status === 'PENDING_VERIFICATION' && canApprove()) buttons.push(['close', '确认关闭', 'btn-primary']);
+  if (x.status === 'APPROVED' && hasPermission('CHANGE_START')) buttons.push(['start', '开始实施', 'btn-light']);
+  if (x.status === 'IMPLEMENTING' && hasPermission('CHANGE_VERIFY')) buttons.push(['verify', '提交验证', 'btn-light']);
+  if (x.status === 'PENDING_VERIFICATION' && hasPermission('CHANGE_CLOSE')) buttons.push(['close', '确认关闭', 'btn-primary']);
   return buttons.map(([action, label, cls]) => `<button type="button" class="btn ${cls} btn-sm" data-change-action="${action}" data-change-id="${x.id}">${label}</button>`).join('') || '<span class="muted">—</span>';
 }
 
@@ -98,7 +98,7 @@ async function renderSettings() {
   setPage('基础设置', '项目基础数据、运行状态、备份及审计信息');
   const health = await api('/internal/system/health');
   let auditHtml = '';
-  if (hasRole('ADMIN')) {
+  if (hasPermission('AUDIT_VIEW')) {
     const audit = await api('/internal/system/audit-logs?limit=30');
     auditHtml = `<section class="card"><div class="card-head"><h3>最近操作日志</h3><span class="muted">最近 ${audit.items.length} 条</span></div><div class="table-wrap">
       ${audit.items.length ? `<table><thead><tr><th>时间</th><th>操作人</th><th>对象</th><th>动作</th><th>摘要</th></tr></thead><tbody>${audit.items.map(x => `<tr><td>${esc(fmtDate(x.createdAt))}</td><td>${esc(x.operatorName)}</td><td>${esc(x.entityType)} #${esc(x.entityId ?? '—')}</td><td class="code">${esc(x.actionType)}</td><td>${esc(x.summary)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">暂无日志</div>'}
@@ -107,13 +107,13 @@ async function renderSettings() {
   content.innerHTML = `<section class="dashboard-grid">
     <div class="card"><div class="card-head"><h3>运行状态</h3><span class="badge released">运行正常</span></div><div class="card-body"><div class="kv-list">
       <div>应用名称</div><div>${esc(health.application)}</div><div>SQLite版本</div><div>${esc(health.sqliteVersion)}</div><div>数据库路径</div><div class="code">${esc(health.databasePath)}</div><div>系统时间</div><div>${esc(health.time)}</div>
-    </div>${hasRole('ADMIN') ? '<div style="margin-top:14px"><button type="button" id="manual-backup" class="btn btn-primary">立即备份数据库</button></div>' : ''}</div></div>
-    <div class="card"><div class="card-head"><h3>项目/车型</h3>${canEdit() ? '<button type="button" id="new-project" class="btn btn-primary btn-sm">+ 新增项目</button>' : ''}</div><div class="card-body recent-list">
+    </div>${hasPermission('SYSTEM_BACKUP') ? '<div style="margin-top:14px"><button type="button" id="manual-backup" class="btn btn-primary">立即备份数据库</button></div>' : ''}</div></div>
+    <div class="card"><div class="card-head"><h3>项目/车型</h3>${hasPermission('MASTERDATA_EDIT') ? '<button type="button" id="new-project" class="btn btn-primary btn-sm">+ 新增项目</button>' : ''}</div><div class="card-body recent-list">
       ${state.master.projects.map(x => `<div class="recent-row"><div><strong>${esc(x.name)}</strong><small>${esc(x.code)}</small></div><span class="badge active">启用</span></div>`).join('')}
     </div></div>
   </section>${auditHtml}`;
-  if (hasRole('ADMIN')) byId('manual-backup').onclick = async () => { try { const result = await api('/internal/system/backup', { method: 'POST' }); toast(result.message); } catch (error) { toast(error.message, 'error'); } };
-  if (canEdit()) byId('new-project').onclick = openProjectForm;
+  if (hasPermission('SYSTEM_BACKUP')) byId('manual-backup').onclick = async () => { try { const result = await api('/internal/system/backup', { method: 'POST' }); toast(result.message); } catch (error) { toast(error.message, 'error'); } };
+  if (hasPermission('MASTERDATA_EDIT')) byId('new-project').onclick = openProjectForm;
 }
 
 function openProjectForm() {

@@ -14,7 +14,7 @@ async function applyBaselineVersionPolicyV071(deliverableId) {
     formalBaselineStatusesV071.has(version.status) || Boolean(version.releaseDate));
   const hasCurrentReleasedBaseline = versions.some(version =>
     version.isCurrent && version.status === 'RELEASED');
-  const isAdministrator = hasRole('ADMIN');
+  const isAdministrator = hasPermission('USER_MANAGE');
 
   const title = document.querySelector('.detail-title');
   if (title && !document.querySelector('.baseline-policy-alert')) {
@@ -26,13 +26,15 @@ async function applyBaselineVersionPolicyV071(deliverableId) {
     title.insertAdjacentElement('afterend', notice);
   }
 
-  if (!canEdit()) return;
+  const canCreateVersion = hasPermission('VERSION_CREATE');
+  const canCreateChange = hasPermission('CHANGE_CREATE');
+  if (!canCreateVersion && !canCreateChange) return;
 
   const actions = document.querySelector('.detail-title .inline-actions');
   if (!actions) return;
 
   let addVersionButton = byId('add-version');
-  if (!addVersionButton && (!hasFormalBaseline || isAdministrator)) {
+  if (!addVersionButton && canCreateVersion && (!hasFormalBaseline || isAdministrator)) {
     addVersionButton = document.createElement('button');
     addVersionButton.type = 'button';
     addVersionButton.id = 'add-version';
@@ -40,7 +42,7 @@ async function applyBaselineVersionPolicyV071(deliverableId) {
   }
 
   if (!hasFormalBaseline) {
-    if (addVersionButton) {
+    if (addVersionButton && canCreateVersion) {
       addVersionButton.className = 'btn btn-primary';
       addVersionButton.textContent = '+ 新增迭代版本';
       addVersionButton.title = '用于正式基线形成前的草稿迭代和评审修改';
@@ -49,29 +51,31 @@ async function applyBaselineVersionPolicyV071(deliverableId) {
     return;
   }
 
-  let changeButton = byId('start-controlled-change');
-  if (!changeButton) {
-    changeButton = document.createElement('button');
-    changeButton.type = 'button';
-    changeButton.id = 'start-controlled-change';
-    actions.prepend(changeButton);
+  if (canCreateChange) {
+    let changeButton = byId('start-controlled-change');
+    if (!changeButton) {
+      changeButton = document.createElement('button');
+      changeButton.type = 'button';
+      changeButton.id = 'start-controlled-change';
+      actions.prepend(changeButton);
+    }
+    changeButton.className = 'btn btn-primary';
+    changeButton.textContent = '+ 发起变更';
+    changeButton.disabled = !hasCurrentReleasedBaseline;
+    changeButton.title = hasCurrentReleasedBaseline
+      ? '基于当前正式版本发起受控变更'
+      : '当前没有有效的已发布版本，无法发起变更';
+    changeButton.onclick = hasCurrentReleasedBaseline
+      ? () => openChangeFormV071(deliverableId, deliverable)
+      : null;
   }
-  changeButton.className = 'btn btn-primary';
-  changeButton.textContent = '+ 发起变更';
-  changeButton.disabled = !hasCurrentReleasedBaseline;
-  changeButton.title = hasCurrentReleasedBaseline
-    ? '基于当前正式版本发起受控变更'
-    : '当前没有有效的已发布版本，无法发起变更';
-  changeButton.onclick = hasCurrentReleasedBaseline
-    ? () => openChangeFormV071(deliverableId, deliverable)
-    : null;
 
   if (!isAdministrator) {
     addVersionButton?.remove();
     return;
   }
 
-  if (addVersionButton) {
+  if (addVersionButton && canCreateVersion) {
     addVersionButton.className = 'btn btn-light';
     addVersionButton.textContent = '+ 管理员补录版本';
     addVersionButton.title = '仅用于历史数据迁移或特殊纠错，不属于正常版本迭代流程';
@@ -87,6 +91,7 @@ async function applyBaselineVersionPolicyV071(deliverableId) {
 }
 
 async function openChangeFormV071(preselectedDeliverableId = null, preselectedDeliverable = null) {
+  if (!hasPermission('CHANGE_CREATE')) { toast('当前角色没有发起变更权限。', 'error'); return; }
   try {
     const list = await api('/internal/deliverables?page=1&pageSize=100');
     const eligible = (list.items || []).filter(item =>
@@ -150,5 +155,4 @@ async function openChangeFormV071(preselectedDeliverableId = null, preselectedDe
   }
 }
 
-// 变更管理页的“发起变更”入口也统一使用基线筛选和新工作流接口。
 openChangeForm = openChangeFormV071;
