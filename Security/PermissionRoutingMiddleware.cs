@@ -26,6 +26,7 @@ public sealed class PermissionRoutingMiddleware
         if(path.StartsWith("/internal/analytics",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.AnalyticsView,null,"当前角色没有查看完整度分析的权限。");
         if(path.StartsWith("/internal/users",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.UserManage,null,"当前角色没有用户管理权限。");
         if(path.StartsWith("/internal/roles",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.RoleManage,null,"当前角色没有角色管理权限。");
+        if(path.StartsWith("/internal/product-baselines",StringComparison.OrdinalIgnoreCase))return ProductBaselineRule(method,path);
         if(path.StartsWith("/internal/system/backup",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.SystemBackup,null,"当前角色没有数据库备份权限。");
         if(path.StartsWith("/internal/system/audit-logs",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.AuditView,null,"当前角色没有查看审计日志的权限。");
         if(path.StartsWith("/internal/master-data",StringComparison.OrdinalIgnoreCase))return new(method=="GET"?PermissionCatalog.MasterDataView:PermissionCatalog.MasterDataEdit,null,"当前角色没有维护基础数据的权限。");
@@ -43,6 +44,14 @@ public sealed class PermissionRoutingMiddleware
         if(path.StartsWith("/internal/changes",StringComparison.OrdinalIgnoreCase))
         {if(method=="GET")return new(PermissionCatalog.ChangeView,null,"当前角色没有查看变更的权限。");if(method=="POST"&&path.TrimEnd('/').Equals("/internal/changes",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.ChangeCreate,null,"当前角色没有发起变更的权限。");return ChangeActionRule(path.Split('/').LastOrDefault());}
         return null;
+    }
+    private static Rule ProductBaselineRule(string method,string path)
+    {
+        if(path.EndsWith("/options",StringComparison.OrdinalIgnoreCase)||method=="GET"&&path.TrimEnd('/').Equals("/internal/product-baselines",StringComparison.OrdinalIgnoreCase)||method=="GET")return new(PermissionCatalog.BaselineView,null,"当前角色没有查看产品基线的权限。");
+        if(path.EndsWith("/publish",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.BaselinePublish,null,"当前角色没有发布产品基线的权限。");
+        if(path.EndsWith("/copy",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.BaselineCopy,null,"当前角色没有复制已发布基线的权限。");
+        if(path.EndsWith("/changes",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.BaselineChange,null,"当前角色没有变更基线基础信息的权限。");
+        return method=="POST"?new(PermissionCatalog.BaselineCreate,null,"当前角色没有新增产品基线的权限。"):new(PermissionCatalog.BaselineEdit,null,"当前角色没有编辑产品基线草稿的权限。");
     }
     private static Rule VersionActionRule(string? action)=>action?.ToLowerInvariant() switch{"submit-review"=>new(PermissionCatalog.VersionSubmit,"VERSION_APPROVAL","当前角色没有提交版本审批的权限。"),"return-draft"=>new(PermissionCatalog.VersionReturn,"VERSION_APPROVAL","当前角色没有退回版本的权限。"),"approve"=>new(PermissionCatalog.VersionApprove,"VERSION_APPROVAL","当前角色没有版本审批权限。"),"release"=>new(PermissionCatalog.VersionRelease,"VERSION_RELEASE","当前角色没有版本正式发布权限。"),"deprecate"=>new(PermissionCatalog.VersionDeprecate,"VERSION_DEPRECATE","当前角色没有版本废止权限。"),_=>new(PermissionCatalog.VersionViewSafe,null,"当前角色没有版本操作权限。")};
     private static Rule ChangeActionRule(string? action)=>action?.ToLowerInvariant() switch{"approve" or "reject"=>new(PermissionCatalog.ChangeApprove,"CHANGE_APPROVAL","当前角色没有变更批准/驳回权限。"),"start"=>new(PermissionCatalog.ChangeStart,"CHANGE_IMPLEMENT","当前角色没有开始实施变更的权限。"),"verify"=>new(PermissionCatalog.ChangeVerify,"CHANGE_VERIFY","当前角色没有提交变更验证的权限。"),"close"=>new(PermissionCatalog.ChangeClose,"CHANGE_CLOSE","当前角色没有关闭变更的权限。"),_=>new(PermissionCatalog.ChangeView,null,"当前角色没有变更操作权限。")};

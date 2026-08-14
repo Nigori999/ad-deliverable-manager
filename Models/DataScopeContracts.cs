@@ -16,6 +16,9 @@ public static class DataScopeCatalog
     public const string Owner = "OWNER";
     public const string HardwareCategory = "HARDWARE_CATEGORY";
 
+    public const string All = "ALL";
+    public const string Include = "INCLUDE";
+
     public static readonly IReadOnlyList<(string Code, string Name)> Dimensions =
     [
         (Department, "部门"),
@@ -25,9 +28,11 @@ public static class DataScopeCatalog
         (HardwareCategory, "硬件类别")
     ];
 
-    public static readonly IReadOnlyList<string> HardwareCategories =
-    ["前视摄像头", "周视摄像头", "角雷达", "激光雷达", "毫米波雷达", "超声波雷达", "智驾域控制器"];
+    public static bool IsDimension(string? code) =>
+        !string.IsNullOrWhiteSpace(code) &&
+        Dimensions.Any(x => x.Code.Equals(code, StringComparison.OrdinalIgnoreCase));
 
-    public static bool IsDimension(string code) => Dimensions.Any(x => x.Code.Equals(code, StringComparison.OrdinalIgnoreCase));
-    public static bool IsScopeType(string type) => type.Equals("ALL", StringComparison.OrdinalIgnoreCase) || type.Equals("INCLUDE", StringComparison.OrdinalIgnoreCase);
+    public static bool IsScopeType(string? scopeType) =>
+        All.Equals(scopeType, StringComparison.OrdinalIgnoreCase) ||
+        Include.Equals(scopeType, StringComparison.OrdinalIgnoreCase);
 }
