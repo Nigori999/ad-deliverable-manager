@@ -1,7 +1,6 @@
 namespace AdDeliverableManager.Models;
 
 public sealed record LookupItem(int Id,string Code,string Name,int? ParentId=null,bool Flag=false);
-public sealed record UserRecord(int Id,string Username,string DisplayName,string PasswordHash,string PasswordSalt,bool IsEnabled,bool MustChangePassword,string? LastLoginAt,int Revision);
 
 public sealed class DeliverableCreateRequest{public int DepartmentId{get;set;}public int DeliverableTypeId{get;set;}public int ProjectId{get;set;}public string ObjectCode{get;set;}="";public string UnifiedName{get;set;}="";public string? BusinessModule{get;set;}public string ResponsiblePerson{get;set;}="";public string ConfidentialityLevel{get;set;}="INTERNAL";public string SharePolicy{get;set;}="APPROVAL_REQUIRED";public string? Description{get;set;}public string Operator{get;set;}="系统用户";public VersionCreateRequest InitialVersion{get;set;}=new();}
 public sealed class DeliverableUpdateRequest{public string UnifiedName{get;set;}="";public string? BusinessModule{get;set;}public string ResponsiblePerson{get;set;}="";public string ConfidentialityLevel{get;set;}="INTERNAL";public string SharePolicy{get;set;}="APPROVAL_REQUIRED";public string? Description{get;set;}public int Revision{get;set;}public string Operator{get;set;}="系统用户";}
