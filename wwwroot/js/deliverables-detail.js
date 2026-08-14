@@ -4,7 +4,10 @@ async function renderDeliverableDetail(id) {
   const d = data.deliverable;
   content.innerHTML = `
     <div class="detail-title"><div><h2>${esc(d.name)}</h2><div class="detail-meta"><span class="code">${esc(d.code)}</span>${statusBadge(d.lifecycleStatus)}<span class="badge">${esc(d.type)}</span></div></div>
-      <div class="inline-actions">${canEdit() ? '<button type="button" class="btn btn-primary" id="add-version">+ 新增版本</button><button type="button" class="btn btn-light" id="archive-deliverable">归档</button>' : ''}</div></div>
+      <div class="inline-actions">
+        ${hasPermission('VERSION_CREATE') ? '<button type="button" class="btn btn-primary" id="add-version">+ 新增版本</button>' : ''}
+        ${hasPermission('DELIVERY_ARCHIVE') ? '<button type="button" class="btn btn-light" id="archive-deliverable">归档</button>' : ''}
+      </div></div>
     <section class="card" style="margin-bottom:18px"><div class="card-head"><h3>基本信息</h3></div><div class="card-body"><div class="info-grid">
       ${infoItem('所属部门', d.department)}${infoItem('交付物类型', d.type)}${infoItem('项目/车型', d.project)}${infoItem('对象编码', d.objectCode)}
       ${infoItem('业务模块', d.businessModule || '—')}${infoItem('责任人', d.responsiblePerson)}${infoItem('私密等级', confidentialityNames[d.confidentiality] || d.confidentiality)}${infoItem('对外分享', shareNames[d.sharePolicy] || d.sharePolicy)}
@@ -17,7 +20,7 @@ async function renderDeliverableDetail(id) {
         <td><div class="inline-actions">${versionActionButtons(v)}<button type="button" class="btn btn-light btn-sm copy-version-path" data-path="${esc(v.serverPath)}">复制路径</button></div></td></tr>`).join('')}
       </tbody></table>` : '<div class="empty">暂无版本</div>'}
     </div></section>
-    <section class="card"><div class="card-head"><h3>关联交付物</h3><div class="toolbar">${canEdit() ? '<button type="button" id="add-relation" class="btn btn-primary btn-sm">+ 建立关联</button>' : ''}<span id="relation-count" class="muted"></span></div></div><div id="relations-list"><div class="loading">正在加载关联关系…</div></div></section>`;
+    <section class="card"><div class="card-head"><h3>关联交付物</h3><div class="toolbar">${hasPermission('RELATION_EDIT') ? '<button type="button" id="add-relation" class="btn btn-primary btn-sm">+ 建立关联</button>' : ''}<span id="relation-count" class="muted"></span></div></div><div id="relations-list"><div class="loading">正在加载关联关系…</div></div></section>`;
   if (byId('add-version')) byId('add-version').onclick = () => openVersionForm(id, d.typeCode);
   if (byId('archive-deliverable')) byId('archive-deliverable').onclick = () => archiveDeliverable(id);
   if (byId('add-relation')) byId('add-relation').onclick = () => openRelationForm(id, data.versions);
@@ -29,11 +32,15 @@ async function renderDeliverableDetail(id) {
 function infoItem(label, value) { return `<div class="info-item"><span>${esc(label)}</span><strong>${esc(value ?? '—')}</strong></div>`; }
 
 function versionActionButtons(v) {
-  if (v.status === 'DRAFT' && canEdit())
+  if (v.status === 'DRAFT' && hasPermission('VERSION_SUBMIT'))
     return `<button type="button" class="btn btn-light btn-sm" data-version-action="submit-review" data-version-id="${v.id}">提交审批</button>`;
-  if (v.status === 'IN_REVIEW' && canApprove())
-    return `<button type="button" class="btn btn-light btn-sm" data-version-action="return-draft" data-version-id="${v.id}">退回修改</button><button type="button" class="btn btn-primary btn-sm" data-version-action="release" data-version-id="${v.id}">审批并发布</button>`;
-  if ((v.status === 'RELEASED' || v.status === 'SUPERSEDED') && canApprove())
+  if (v.status === 'IN_REVIEW' && (hasPermission('VERSION_RETURN') || hasPermission('VERSION_APPROVE'))) {
+    const buttons = [];
+    if (hasPermission('VERSION_RETURN')) buttons.push('<button type="button" class="btn btn-light btn-sm" data-version-action="return-draft" data-version-id="' + v.id + '">退回修改</button>');
+    if (hasPermission('VERSION_APPROVE')) buttons.push('<button type="button" class="btn btn-primary btn-sm" data-version-action="release" data-version-id="' + v.id + '">审批并发布</button>');
+    return buttons.join('');
+  }
+  if ((v.status === 'RELEASED' || v.status === 'SUPERSEDED') && hasPermission('VERSION_DEPRECATE'))
     return `<button type="button" class="btn btn-danger btn-sm" data-version-action="deprecate" data-version-id="${v.id}">废止</button>`;
   return '';
 }
@@ -57,6 +64,9 @@ async function runVersionAction(deliverableId, versionId, action, button) {
     deprecate: { title: '废止版本', message: '废止后该版本将被标记为禁止继续使用。', inputLabel: '废止原因', inputRequired: true, submitText: '确认废止', danger: true }
   };
   const config = configs[action];
+  if (!config) return;
+  const requiredPermission = { 'submit-review': 'VERSION_SUBMIT', 'return-draft': 'VERSION_RETURN', release: 'VERSION_RELEASE', deprecate: 'VERSION_DEPRECATE' }[action];
+  if (!requiredPermission || !hasPermission(requiredPermission)) { toast('当前角色没有该操作权限。', 'error'); return; }
   const result = await confirmAction(config.title, config.message, config);
   if (!result.confirmed) return;
   button.disabled = true;
@@ -69,6 +79,7 @@ async function runVersionAction(deliverableId, versionId, action, button) {
 }
 
 async function archiveDeliverable(id) {
+  if (!hasPermission('DELIVERY_ARCHIVE')) { toast('当前角色没有归档权限。', 'error'); return; }
   const result = await confirmAction('归档交付物', '归档后默认查询将不再显示该交付物，历史记录仍保留。', { inputLabel: '归档原因', inputRequired: true, submitText: '确认归档', danger: true });
   if (!result.confirmed) return;
   await api(`/internal/deliverables/${id}/archive`, { method: 'POST', body: JSON.stringify({ reason: result.value }) });
@@ -83,9 +94,10 @@ async function loadRelations(deliverableId) {
       <td><a class="table-link" href="#/deliverables/${x.sourceDeliverableId}">${esc(x.sourceCode)}<div class="muted">${esc(x.sourceName)}${x.sourceVersion ? ` · ${esc(x.sourceVersion)}` : ''}</div></a></td>
       <td><span class="relation-arrow">${esc(relationNames[x.relationType] || x.relationType)} →</span></td>
       <td><a class="table-link" href="#/deliverables/${x.targetDeliverableId}">${esc(x.targetCode)}<div class="muted">${esc(x.targetName)}${x.targetVersion ? ` · ${esc(x.targetVersion)}` : ''}</div></a></td>
-      <td>${esc(x.description || '—')}</td><td>${canEdit() ? `<button type="button" class="btn btn-danger btn-sm delete-relation" data-id="${x.id}">删除</button>` : '—'}</td></tr>`).join('')}
+      <td>${esc(x.description || '—')}</td><td>${hasPermission('RELATION_EDIT') ? `<button type="button" class="btn btn-danger btn-sm delete-relation" data-id="${x.id}">删除</button>` : '—'}</td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">尚未建立交付物关联关系</div>';
   document.querySelectorAll('.delete-relation').forEach(button => button.onclick = async () => {
+    if (!hasPermission('RELATION_EDIT')) { toast('当前角色没有维护关联关系权限。', 'error'); return; }
     const result = await confirmAction('删除关联', '确认删除该交付物关联关系吗？', { submitText: '确认删除', danger: true });
     if (!result.confirmed) return;
     try { await api(`/internal/relations/${button.dataset.id}`, { method: 'DELETE' }); toast('关联关系已删除'); await loadRelations(deliverableId); }
@@ -94,6 +106,7 @@ async function loadRelations(deliverableId) {
 }
 
 async function openRelationForm(currentId, currentVersions) {
+  if (!hasPermission('RELATION_EDIT')) { toast('当前角色没有维护关联关系权限。', 'error'); return; }
   const candidates = await api(`/internal/relations/candidates?excludeId=${currentId}`);
   if (!candidates.items.length) { toast('没有可关联的其他交付物。', 'error'); return; }
   const currentVersionOptions = `<option value="">交付物级关联</option>${currentVersions.map(x => `<option value="${x.id}">${esc(x.internalVersion)} · ${esc(statusNames[x.status] || x.status)}</option>`).join('')}`;
