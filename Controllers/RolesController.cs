@@ -36,9 +36,8 @@ public sealed class RolesController : ControllerBase
         var departments = await ReadAsync("SELECT CAST(Id AS TEXT), DepartmentName FROM Departments WHERE IsEnabled=1 ORDER BY SortOrder,Id");
         var projects = await ReadAsync("SELECT CAST(Id AS TEXT), ProjectName FROM Projects WHERE IsEnabled=1 ORDER BY ProjectCode,Id");
         var types = await ReadAsync("SELECT CAST(Id AS TEXT), TypeName FROM DeliverableTypes WHERE IsEnabled=1 ORDER BY SortOrder,Id");
-        var hardwareCategories = await ReadAsync("SELECT DISTINCT HardwareCategory, HardwareCategory FROM HardwarePackageDetails WHERE HardwareCategory IS NOT NULL AND TRIM(HardwareCategory)<>'' ORDER BY HardwareCategory");
-        // ResponsiblePerson is currently free text, so use the display name as the stored scope value for compatibility.
         var owners = await ReadAsync("SELECT DisplayName, DisplayName || '（' || Username || '）' FROM Users WHERE IsEnabled=1 ORDER BY DisplayName,Username");
+        var hardwareCategories = DataScopeCatalog.HardwareCategories.Select(x => new DataScopeOption(x, x)).ToList();
         return Ok(new
         {
             dimensions = new[]
@@ -61,5 +60,14 @@ public sealed class RolesController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id,CancellationToken cancellationToken){try{await _roles.DeleteRoleAsync(id,User.GetDisplayName(),cancellationToken);return Ok(new{message="角色已删除。"});}catch(InvalidOperationException ex){return Conflict(new{message=ex.Message});}catch(KeyNotFoundException ex){return NotFound(new{message=ex.Message});}}
     [HttpPut("{id:int}/policy")]
-    public async Task<IActionResult> SavePolicy(int id,[FromBody]RolePermissionUpdateRequest request,CancellationToken cancellationToken){try{await _roles.SaveRolePolicyAsync(id,request,cancellationToken);return Ok(new{message="权限策略已保存。"});}catch(KeyNotFoundException ex){return NotFound(new{message=ex.Message});}}
+    public async Task<IActionResult> SavePolicy(int id,[FromBody]RolePermissionUpdateRequest request,CancellationToken cancellationToken)
+    {
+        foreach (var scope in request.DataScopes)
+        {
+            if (!DataScopeCatalog.IsDimension(scope.Dimension)) return BadRequest(new { message = $"不支持的数据范围维度：{scope.Dimension}" });
+            if (!DataScopeCatalog.IsScopeType(scope.ScopeType)) return BadRequest(new { message = $"不支持的数据范围类型：{scope.ScopeType}" });
+            if (scope.ScopeType.Equals("INCLUDE", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(scope.ScopeValue)) return BadRequest(new { message = "包含型数据范围必须指定范围值。" });
+        }
+        try{await _roles.SaveRolePolicyAsync(id,request,cancellationToken);return Ok(new{message="权限策略已保存。"});}catch(KeyNotFoundException ex){return NotFound(new{message=ex.Message});}
+    }
 }
