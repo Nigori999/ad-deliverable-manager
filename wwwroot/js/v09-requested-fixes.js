@@ -1,0 +1,111 @@
+(() => {
+  // 1) System Management menu: group existing User/Role/Settings entries without changing routes.
+  function installSystemManagementMenu() {
+    const nav = document.querySelector('.sidebar nav');
+    if (!nav || nav.querySelector('[data-system-management]')) return;
+    const users = nav.querySelector('a[data-route="users"]');
+    const roles = nav.querySelector('a[data-route="roles"]');
+    const settings = nav.querySelector('a[data-route="settings"]');
+    if (!users && !roles && !settings) return;
+    const group = document.createElement('details');
+    group.className = 'nav-system-group';
+    group.dataset.systemManagement = 'true';
+    const summary = document.createElement('summary');
+    summary.innerHTML = '<span>⚙</span>系统管理';
+    group.appendChild(summary);
+    [users, roles, settings].filter(Boolean).forEach(link => group.appendChild(link));
+    const first = users || roles || settings;
+    nav.insertBefore(group, first);
+    if (first === users) users.remove();
+    // The appendChild above already moves the nodes; no further removal is required.
+  }
+
+  function updateSystemManagementVisibility() {
+    const group = document.querySelector('[data-system-management]');
+    if (!group) return;
+    const visibleChildren = [...group.querySelectorAll('a[data-permission]')].some(a => !a.classList.contains('hidden'));
+    group.classList.toggle('hidden', !visibleChildren);
+  }
+
+  const originalApplyRoleUiV09 = window.applyRoleUi;
+  if (typeof originalApplyRoleUiV09 === 'function' && !originalApplyRoleUiV09.__v09RequestedWrapped) {
+    window.applyRoleUi = function () {
+      originalApplyRoleUiV09();
+      updateSystemManagementVisibility();
+    };
+    window.applyRoleUi.__v09RequestedWrapped = true;
+  }
+  installSystemManagementMenu();
+  setTimeout(updateSystemManagementVisibility, 0);
+
+  // 2) Project/model CRUD UI. Backend uses soft-delete and refuses deletion when referenced by deliverables.
+  function openProjectEditForm(project) {
+    const body = `<form id="project-edit-form"><div class="form-grid">
+      <div class="field"><label>项目编码 *</label><input name="projectCode" value="${esc(project.code)}" required></div>
+      <div class="field"><label>项目名称 *</label><input name="projectName" value="${esc(project.name)}" required></div>
+      <div class="field"><label>车型</label><input name="vehicleModel" value="${esc(project.vehicleModel || '')}"></div>
+      <div class="field"><label>平台</label><input name="platformName" value="${esc(project.platformName || '')}"></div>
+    </div></form>`;
+    showModal('修改项目/车型', body, { small: true, submitText: '保存', onSubmit: async close => {
+      const form = byId('project-edit-form');
+      if (!form.reportValidity()) throw new Error('请填写项目编码和名称。');
+      const f = new FormData(form);
+      await api(`/internal/master-data/projects/${project.id}`, { method: 'PUT', body: JSON.stringify(Object.fromEntries(f)) });
+      close(); state.master = null; await loadMaster(); toast('项目已更新'); await renderSettings();
+    }});
+  }
+
+  async function deleteProject(project) {
+    const result = await confirmAction('删除项目/车型', `确认删除“${project.name}（${project.code}）”吗？删除后将不再出现在项目车型选择项中。`, { submitText: '确认删除', danger: true });
+    if (!result.confirmed) return;
+    try {
+      await api(`/internal/master-data/projects/${project.id}`, { method: 'DELETE' });
+      state.master = null; await loadMaster(); toast('项目已删除'); await renderSettings();
+    } catch (error) { toast(error.message, 'error'); }
+  }
+
+  const originalRenderSettingsV09 = window.renderSettings;
+  if (typeof originalRenderSettingsV09 === 'function' && !originalRenderSettingsV09.__v09RequestedWrapped) {
+    window.renderSettings = async function () {
+      await originalRenderSettingsV09();
+      if (!hasPermission('MASTERDATA_EDIT')) return;
+      const list = content.querySelector('.recent-list');
+      if (!list) return;
+      list.querySelectorAll('.recent-row').forEach((row, index) => {
+        const project = state.master?.projects?.[index];
+        if (!project) return;
+        const actions = document.createElement('div');
+        actions.className = 'inline-actions';
+        actions.innerHTML = '<button type="button" class="btn btn-light btn-sm project-edit">修改</button><button type="button" class="btn btn-danger btn-sm project-delete">删除</button>';
+        row.appendChild(actions);
+        row.querySelector('.project-edit').onclick = () => openProjectEditForm(project);
+        row.querySelector('.project-delete').onclick = () => deleteProject(project);
+      });
+    };
+    window.renderSettings.__v09RequestedWrapped = true;
+  }
+
+  // 3) Detail page: relation-load failure must not make the whole page appear stuck on loading.
+  const originalRenderDetailV09 = window.renderDeliverableDetail;
+  if (typeof originalRenderDetailV09 === 'function' && !originalRenderDetailV09.__v09RequestedWrapped) {
+    window.renderDeliverableDetail = async function (id) {
+      try {
+        await originalRenderDetailV09(id);
+      } catch (error) {
+        const relationList = byId('relations-list');
+        if (relationList) {
+          relationList.innerHTML = `<div class="empty">关联关系暂时无法加载：${esc(error.message)}<br><button type="button" class="btn btn-light btn-sm" id="retry-relations">重新加载</button></div>`;
+          const retry = byId('retry-relations');
+          if (retry) retry.onclick = async () => {
+            try { await loadRelations(id); }
+            catch (retryError) { toast(retryError.message, 'error'); }
+          };
+          toast(error.message, 'error');
+          return;
+        }
+        throw error;
+      }
+    };
+    window.renderDeliverableDetail.__v09RequestedWrapped = true;
+  }
+})();
