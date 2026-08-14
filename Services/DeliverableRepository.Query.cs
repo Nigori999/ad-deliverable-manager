@@ -13,6 +13,7 @@ public sealed partial class DeliverableRepository
     public async Task<object> SearchAsync(
         string? keyword, int? departmentId, int? typeId, int? projectId,
         string? status, string? confidentiality, string? sharePolicy,
+        IReadOnlyList<int> allowedDeliverableIds,
         int page, int pageSize, CancellationToken cancellationToken)
     {
         page = Math.Max(1, page);
@@ -21,6 +22,7 @@ public sealed partial class DeliverableRepository
         await using var connection = await _database.OpenConnectionAsync(cancellationToken);
         var where = new StringBuilder(" WHERE d.LifecycleStatus <> 'ARCHIVED' ");
         var parameters = new List<(string Name, object? Value)>();
+        AppendAllowedDeliverableFilter(where, parameters, allowedDeliverableIds);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -160,4 +162,32 @@ public sealed partial class DeliverableRepository
         return new { deliverable, versions };
     }
 
+    private static void AppendAllowedDeliverableFilter(StringBuilder where,List<(string Name,object? Value)> parameters,IReadOnlyList<int> allowedIds)
+    {
+        if (allowedIds.Count == 0)
+        {
+            where.Append(" AND 1=0 ");
+            return;
+        }
+
+        // SQLite has a practical bound on the number of host parameters. Keep each
+        // IN clause below that bound while preserving the same allowed-id set.
+        const int chunkSize = 500;
+        where.Append(" AND (");
+        for (var offset = 0; offset < allowedIds.Count; offset += chunkSize)
+        {
+            if (offset > 0) where.Append(" OR ");
+            var count = Math.Min(chunkSize, allowedIds.Count - offset);
+            where.Append("d.Id IN (");
+            for (var i = 0; i < count; i++)
+            {
+                if (i > 0) where.Append(',');
+                var parameterName = $"$allowed{offset + i}";
+                where.Append(parameterName);
+                parameters.Add((parameterName, allowedIds[offset + i]));
+            }
+            where.Append(')');
+        }
+        where.Append(") ");
+    }
 }
