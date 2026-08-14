@@ -149,7 +149,9 @@ async function route() {
     if (routeName === 'deliverables') return renderDeliverables();
     if (routeName === 'changes') return renderChanges();
     if (routeName === 'analytics') return renderAnalytics();
+    if (routeName === 'product-baselines') return renderProductBaselines();
     if (routeName === 'users') return renderUsers();
+    if (routeName === 'roles') return renderRoles();
     if (routeName === 'settings') return renderSettings();
     location.hash = '#/dashboard';
   } catch (error) {
