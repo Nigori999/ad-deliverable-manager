@@ -15,15 +15,12 @@ public sealed class ProductBaselinesController : ControllerBase
     public ProductBaselinesController(ProductBaselineRepository repository) => _repository = repository;
 
     [HttpGet]
-    [PermissionAuthorize(PermissionCatalog.BaselineView)]
     public async Task<IActionResult> List(CancellationToken ct) => Ok(new { items = await _repository.ListAsync(ct) });
 
     [HttpGet("options")]
-    [PermissionAuthorize(PermissionCatalog.BaselineView)]
     public async Task<IActionResult> Options(CancellationToken ct) => Ok(await _repository.GetOptionsAsync(ct));
 
     [HttpGet("{id:int}")]
-    [PermissionAuthorize(PermissionCatalog.BaselineView)]
     public async Task<IActionResult> Get(int id, CancellationToken ct)
     {
         var result = await _repository.GetAsync(id, ct);
@@ -31,7 +28,6 @@ public sealed class ProductBaselinesController : ControllerBase
     }
 
     [HttpPost]
-    [PermissionAuthorize(PermissionCatalog.BaselineCreate)]
     public async Task<IActionResult> Create([FromBody] ProductBaselineCreateRequest request, CancellationToken ct)
     {
         try { return Ok(new { id = await _repository.CreateAsync(request, User.GetDisplayName(), ct), message = "产品版本基线已创建。" }); }
@@ -40,7 +36,6 @@ public sealed class ProductBaselinesController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
-    [PermissionAuthorize(PermissionCatalog.BaselineEdit)]
     public async Task<IActionResult> Update(int id, [FromBody] ProductBaselineUpdateRequest request, CancellationToken ct)
     {
         try { await _repository.UpdateDraftAsync(id, request, User.GetDisplayName(), ct); return Ok(new { message = "产品基线草稿已保存。" }); }
@@ -49,7 +44,6 @@ public sealed class ProductBaselinesController : ControllerBase
     }
 
     [HttpPost("{id:int}/publish")]
-    [PermissionAuthorize(PermissionCatalog.BaselinePublish)]
     public async Task<IActionResult> Publish(int id, [FromBody] RevisionRequest request, CancellationToken ct)
     {
         try { await _repository.PublishAsync(id, request.Revision, User.GetDisplayName(), ct); return Ok(new { message = "产品版本基线已正式发布。" }); }
@@ -58,7 +52,6 @@ public sealed class ProductBaselinesController : ControllerBase
     }
 
     [HttpPost("{id:int}/copy")]
-    [PermissionAuthorize(PermissionCatalog.BaselineCopy)]
     public async Task<IActionResult> Copy(int id, [FromBody] ProductBaselineCopyRequest request, CancellationToken ct)
     {
         try { return Ok(new { id = await _repository.CopyAsync(id, request, User.GetDisplayName(), ct), message = "产品版本基线已复制为新草稿。" }); }
@@ -68,7 +61,6 @@ public sealed class ProductBaselinesController : ControllerBase
     }
 
     [HttpPost("{id:int}/changes")]
-    [PermissionAuthorize(PermissionCatalog.BaselineChange)]
     public async Task<IActionResult> Change(int id, [FromBody] ProductBaselineChangeRequest request, CancellationToken ct)
     {
         try { await _repository.ApplyChangeAsync(id, request, User.GetDisplayName(), ct); return Ok(new { message = "基础信息变更已生效。" }); }
