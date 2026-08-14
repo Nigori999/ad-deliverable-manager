@@ -15,7 +15,4 @@ public static class ClaimsPrincipalExtensions
 
     public static string GetUsername(this ClaimsPrincipal user) =>
         user.FindFirstValue("username") ?? "";
-
-    public static string GetRoleCode(this ClaimsPrincipal user) =>
-        user.FindFirstValue(ClaimTypes.Role) ?? AppRoles.Viewer;
 }
