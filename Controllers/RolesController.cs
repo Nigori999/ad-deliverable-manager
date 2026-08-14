@@ -28,8 +28,7 @@ public sealed class RolesController : ControllerBase
         async Task<List<DataScopeOption>> ReadAsync(string sql)
         {
             var result = new List<DataScopeOption>();
-            await using var command = connection.CreateCommand();
-            command.CommandText = sql;
+            await using var command = connection.CreateCommand(); command.CommandText = sql;
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken)) result.Add(new DataScopeOption(reader.GetString(0), reader.GetString(1)));
             return result;
@@ -38,7 +37,8 @@ public sealed class RolesController : ControllerBase
         var projects = await ReadAsync("SELECT CAST(Id AS TEXT), ProjectName FROM Projects WHERE IsEnabled=1 ORDER BY ProjectCode,Id");
         var types = await ReadAsync("SELECT CAST(Id AS TEXT), TypeName FROM DeliverableTypes WHERE IsEnabled=1 ORDER BY SortOrder,Id");
         var hardwareCategories = await ReadAsync("SELECT DISTINCT HardwareCategory, HardwareCategory FROM HardwarePackageDetails WHERE HardwareCategory IS NOT NULL AND TRIM(HardwareCategory)<>'' ORDER BY HardwareCategory");
-        var owners = await ReadAsync("SELECT Username, DisplayName FROM Users WHERE IsEnabled=1 ORDER BY DisplayName,Username");
+        // ResponsiblePerson is currently free text, so use the display name as the stored scope value for compatibility.
+        var owners = await ReadAsync("SELECT DisplayName, DisplayName || '（' || Username || '）' FROM Users WHERE IsEnabled=1 ORDER BY DisplayName,Username");
         return Ok(new
         {
             dimensions = new[]
