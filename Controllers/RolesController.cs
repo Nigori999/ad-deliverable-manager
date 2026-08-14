@@ -37,16 +37,16 @@ public sealed class RolesController : ControllerBase
         var projects = await ReadAsync("SELECT CAST(Id AS TEXT), ProjectName FROM Projects WHERE IsEnabled=1 ORDER BY ProjectCode,Id");
         var types = await ReadAsync("SELECT CAST(Id AS TEXT), TypeName FROM DeliverableTypes WHERE IsEnabled=1 ORDER BY SortOrder,Id");
         var owners = await ReadAsync("SELECT DisplayName, DisplayName || '（' || Username || '）' FROM Users WHERE IsEnabled=1 ORDER BY DisplayName,Username");
-        var hardwareCategories = DataScopeCatalog.HardwareCategories.Select(x => new DataScopeOption(x, x)).ToList();
+        var hardwareCategories = await ReadAsync("SELECT DISTINCT HardwareCategory, HardwareCategory FROM HardwarePackageDetails WHERE HardwareCategory IS NOT NULL AND TRIM(HardwareCategory)<>'' ORDER BY HardwareCategory");
         return Ok(new
         {
             dimensions = new[]
             {
-                new DataScopeDimensionDefinition(DataScopeCatalog.Department, "部门", "INCLUDE", departments),
-                new DataScopeDimensionDefinition(DataScopeCatalog.Project, "项目", "INCLUDE", projects),
-                new DataScopeDimensionDefinition(DataScopeCatalog.Type, "交付物类型", "INCLUDE", types),
-                new DataScopeDimensionDefinition(DataScopeCatalog.Owner, "负责人", "INCLUDE", owners),
-                new DataScopeDimensionDefinition(DataScopeCatalog.HardwareCategory, "硬件类别", "INCLUDE", hardwareCategories)
+                new DataScopeDimensionDefinition(DataScopeCatalog.Department, "部门", DataScopeCatalog.Include, departments),
+                new DataScopeDimensionDefinition(DataScopeCatalog.Project, "项目", DataScopeCatalog.Include, projects),
+                new DataScopeDimensionDefinition(DataScopeCatalog.Type, "交付物类型", DataScopeCatalog.Include, types),
+                new DataScopeDimensionDefinition(DataScopeCatalog.Owner, "负责人", DataScopeCatalog.Include, owners),
+                new DataScopeDimensionDefinition(DataScopeCatalog.HardwareCategory, "硬件类别", DataScopeCatalog.Include, hardwareCategories)
             }
         });
     }
@@ -66,7 +66,7 @@ public sealed class RolesController : ControllerBase
         {
             if (!DataScopeCatalog.IsDimension(scope.Dimension)) return BadRequest(new { message = $"不支持的数据范围维度：{scope.Dimension}" });
             if (!DataScopeCatalog.IsScopeType(scope.ScopeType)) return BadRequest(new { message = $"不支持的数据范围类型：{scope.ScopeType}" });
-            if (scope.ScopeType.Equals("INCLUDE", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(scope.ScopeValue)) return BadRequest(new { message = "包含型数据范围必须指定范围值。" });
+            if (scope.ScopeType.Equals(DataScopeCatalog.Include, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(scope.ScopeValue)) return BadRequest(new { message = "包含型数据范围必须指定范围值。" });
         }
         try{await _roles.SaveRolePolicyAsync(id,request,cancellationToken);return Ok(new{message="权限策略已保存。"});}catch(KeyNotFoundException ex){return NotFound(new{message=ex.Message});}
     }
