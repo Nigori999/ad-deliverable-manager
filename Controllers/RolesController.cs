@@ -13,10 +13,53 @@ namespace AdDeliverableManager.Controllers;
 public sealed class RolesController : ControllerBase
 {
     private readonly PermissionRepository _roles;
-    public RolesController(PermissionRepository roles)=>_roles=roles;
+    private readonly DatabaseService _database;
+    private readonly PermissionUserRepository _users;
+
+    public RolesController(PermissionRepository roles, DatabaseService database, PermissionUserRepository users)
+    { _roles=roles; _database=database; _users=users; }
 
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken cancellationToken)=>Ok(new { items=await _roles.ListRolesAsync(cancellationToken),permissions=await _roles.ListPermissionsAsync(cancellationToken),workflowNodes=PermissionCatalog.WorkflowNodes.Select(x=>new{code=x.Code,name=x.Name}) });
+
+    [HttpGet("data-scope-schema")]
+    public async Task<IActionResult> DataScopeSchema(CancellationToken cancellationToken)
+    {
+        await using var connection = await _database.OpenConnectionAsync(cancellationToken);
+
+        async Task<List<DataScopeOption>> ReadAsync(string sql)
+        {
+            var result = new List<DataScopeOption>();
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                result.Add(new DataScopeOption(reader.GetString(0), reader.GetString(1)));
+            return result;
+        }
+
+        var departments = await ReadAsync("SELECT Id, DepartmentName FROM Departments WHERE IsEnabled=1 ORDER BY SortOrder,Id");
+        var projects = await ReadAsync("SELECT Id, ProjectName FROM Projects WHERE IsEnabled=1 ORDER BY ProjectCode,Id");
+        var types = await ReadAsync("SELECT Id, TypeName FROM DeliverableTypes WHERE IsEnabled=1 ORDER BY SortOrder,Id");
+        var hardwareCategories = await ReadAsync("SELECT DISTINCT HardwareCategory, HardwareCategory FROM HardwarePackageDetails WHERE HardwareCategory IS NOT NULL AND TRIM(HardwareCategory)<>'' ORDER BY HardwareCategory");
+
+        // ResponsiblePerson is currently a free-text field in Deliverables. Use the existing
+        // user directory as the source of selectable owners, while the stored value remains
+        // compatible with historical display-name values.
+        var owners = await ReadAsync("SELECT Username, DisplayName FROM Users WHERE IsEnabled=1 ORDER BY DisplayName,Username");
+
+        return Ok(new
+        {
+            dimensions = new[]
+            {
+                new DataScopeDimensionDefinition(DataScopeCatalog.Department, "部门", "INCLUDE", departments),
+                new DataScopeDimensionDefinition(DataScopeCatalog.Project, "项目", "INCLUDE", projects),
+                new DataScopeDimensionDefinition(DataScopeCatalog.Type, "交付物类型", "INCLUDE", types),
+                new DataScopeDimensionDefinition(DataScopeCatalog.Owner, "负责人", "INCLUDE", owners),
+                new DataScopeDimensionDefinition(DataScopeCatalog.HardwareCategory, "硬件类别", "INCLUDE", hardwareCategories)
+            }
+        });
+    }
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> Get(int id,CancellationToken cancellationToken){var x=await _roles.GetRoleAsync(id,cancellationToken);return x is null?NotFound(new{message="角色不存在。"}):Ok(x);}
@@ -31,5 +74,5 @@ public sealed class RolesController : ControllerBase
     public async Task<IActionResult> Delete(int id,CancellationToken cancellationToken){try{await _roles.DeleteRoleAsync(id,User.GetDisplayName(),cancellationToken);return Ok(new{message="角色已删除。"});}catch(InvalidOperationException ex){return Conflict(new{message=ex.Message});}catch(KeyNotFoundException ex){return NotFound(new{message=ex.Message});}}
 
     [HttpPut("{id:int}/policy")]
-    public async Task<IActionResult> SavePolicy(int id,[FromBody]RolePermissionUpdateRequest request,CancellationToken cancellationToken){try{await _roles.SaveRolePolicyAsync(id,request,cancellationToken);return Ok(new{message="权限策略已保存。"});}catch(KeyNotFoundException ex){return NotFound(new{message=ex.Message});}}
+    public async Task<IActionResult> SavePolicy(int id,[FromBody]RolePermissionUpdateRequest request,CancellationToken cancellationToken){try{await _roles.SaveRolePolicyAsync(id,request,cancellationToken);return Ok(new{message="权限策略已保存。"});}catch<KeyNotFoundException>(new KeyNotFoundException("角色不存在。"));}
 }
