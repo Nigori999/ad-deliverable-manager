@@ -22,16 +22,9 @@ CREATE TABLE IF NOT EXISTS RoleDataScopes(Id INTEGER PRIMARY KEY AUTOINCREMENT,R
 CREATE INDEX IF NOT EXISTS IX_UserRoles_User ON UserRoles(UserId);CREATE INDEX IF NOT EXISTS IX_UserRoles_Role ON UserRoles(RoleId);CREATE INDEX IF NOT EXISTS IX_RolePermissions_Role ON RolePermissions(RoleId);CREATE INDEX IF NOT EXISTS IX_RoleDataScopes_RoleDimension ON RoleDataScopes(RoleId,Dimension);
 """;
         await cmd.ExecuteNonQueryAsync(ct);
-
-        await using var cleanup = c.CreateCommand();
-        cleanup.CommandText = "DELETE FROM RoleDataScopes WHERE Dimension NOT IN ('DEPARTMENT','PROJECT','TYPE')";
-        await cleanup.ExecuteNonQueryAsync(ct);
-
+        await using var cleanup = c.CreateCommand(); cleanup.CommandText = "DELETE FROM RoleDataScopes WHERE Dimension NOT IN ('DEPARTMENT','PROJECT','TYPE')"; await cleanup.ExecuteNonQueryAsync(ct);
         var catalogCodes = string.Join(",", PermissionCatalog.All.Select(x => $"'{x.Code.Replace("'", "''")}'"));
-        await using var permissionCleanup = c.CreateCommand();
-        permissionCleanup.CommandText = $"DELETE FROM Permissions WHERE Code NOT IN ({catalogCodes})";
-        await permissionCleanup.ExecuteNonQueryAsync(ct);
-
+        await using var permissionCleanup = c.CreateCommand(); permissionCleanup.CommandText = $"DELETE FROM Permissions WHERE Code NOT IN ({catalogCodes})"; await permissionCleanup.ExecuteNonQueryAsync(ct);
         await SeedPermissionsAsync(c, ct);
         var systemRoleId = await EnsureSystemAdminRoleAsync(c, ct);
         await EnsureSystemAdminPolicyAsync(c, systemRoleId, ct);
@@ -57,7 +50,7 @@ CREATE INDEX IF NOT EXISTS IX_UserRoles_User ON UserRoles(UserId);CREATE INDEX I
 
     private static async Task EnsureSystemAdminPolicyAsync(Microsoft.Data.Sqlite.SqliteConnection c, int roleId, CancellationToken ct)
     {
-        await using var tx = await c.BeginTransactionAsync(ct);
+        using var tx = c.BeginTransaction();
         await using var clearPermissions = c.CreateCommand(); clearPermissions.Transaction = tx; clearPermissions.CommandText = "DELETE FROM RolePermissions WHERE RoleId=$role"; clearPermissions.Parameters.AddWithValue("$role", roleId); await clearPermissions.ExecuteNonQueryAsync(ct);
         foreach (var permission in PermissionCatalog.All)
         {
