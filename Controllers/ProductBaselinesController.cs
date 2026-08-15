@@ -12,7 +12,13 @@ namespace AdDeliverableManager.Controllers;
 public sealed class ProductBaselinesController : ControllerBase
 {
     private readonly ProductBaselineRepository _repository;
-    public ProductBaselinesController(ProductBaselineRepository repository) => _repository = repository;
+    private readonly ProductBaselineChangeService _changeService;
+
+    public ProductBaselinesController(ProductBaselineRepository repository, ProductBaselineChangeService changeService)
+    {
+        _repository = repository;
+        _changeService = changeService;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct) => Ok(new { items = await _repository.ListAsync(ct) });
@@ -63,7 +69,7 @@ public sealed class ProductBaselinesController : ControllerBase
     [HttpPost("{id:int}/changes")]
     public async Task<IActionResult> Change(int id, [FromBody] ProductBaselineChangeRequest request, CancellationToken ct)
     {
-        try { await _repository.ApplyChangeAsync(id, request, User.GetDisplayName(), ct); return Ok(new { message = "基础信息变更已生效。" }); }
+        try { await _changeService.ApplyAsync(id, request, User.GetDisplayName(), ct); return Ok(new { message = "产品基线变更已生效。" }); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
         catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
         catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
