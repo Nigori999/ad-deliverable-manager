@@ -1,6 +1,6 @@
 namespace AdDeliverableManager.Models;
 
-public sealed class RoleCreateRequest
+public class RoleCreateRequest
 {
     public string Name { get; set; } = "";
     public string Code { get; set; } = "";
