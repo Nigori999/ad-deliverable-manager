@@ -1,0 +1,114 @@
+const permissionFriendly = {
+  DELIVERY_VIEW:'查看交付物',DELIVERY_CREATE:'新增交付物',DELIVERY_EDIT:'编辑交付物',DELIVERY_ARCHIVE:'归档交付物',DELIVERY_EXPORT:'导出交付物',
+  VERSION_VIEW:'查看版本',VERSION_CREATE:'新增版本',VERSION_SUBMIT:'提交版本审批',VERSION_RETURN:'退回版本修改',VERSION_APPROVE:'版本审批通过',VERSION_RELEASE:'版本正式发布',VERSION_DEPRECATE:'废止版本',
+  RELATION_VIEW:'查看关联关系',RELATION_CREATE:'建立关联关系',RELATION_DELETE:'删除关联关系',
+  BASELINE_VIEW:'查看产品基线',BASELINE_CREATE:'新增产品基线',BASELINE_EDIT:'编辑产品基线草稿',BASELINE_PUBLISH:'发布产品基线',BASELINE_COPY:'复制产品基线',BASELINE_CHANGE:'变更产品基线',
+  CHANGE_VIEW:'查看变更',CHANGE_CREATE:'发起变更',CHANGE_EXPORT:'导出变更',CHANGE_APPROVE:'批准变更',CHANGE_REJECT:'驳回变更',CHANGE_START:'开始实施变更',CHANGE_VERIFY:'提交变更验证',CHANGE_CLOSE:'关闭变更',
+  DASHBOARD_VIEW:'查看仪表盘',ANALYTICS_VIEW:'查看完整度分析',MASTERDATA_VIEW:'查看基础数据',MASTERDATA_CREATE:'新增基础数据',MASTERDATA_EDIT:'编辑基础数据',MASTERDATA_DELETE:'删除基础数据',
+  USER_VIEW:'查看用户',USER_CREATE:'新增用户',USER_EDIT:'编辑用户',USER_RESET_PASSWORD:'重置用户密码',ROLE_VIEW:'查看角色',ROLE_CREATE:'新增角色',ROLE_EDIT:'编辑角色',ROLE_PERMISSION_EDIT:'配置角色权限',ROLE_DELETE:'删除角色',SYSTEM_BACKUP:'数据库备份',AUDIT_VIEW:'查看审计日志'
+};
+
+function hasPermission(code){return state.auth?.user?.permissions?.includes(code)===true;}
+
+function applyRoleUi(){
+  const permissions=new Set(state.auth?.user?.permissions||[]);
+  byId('current-user-name').textContent=state.auth?.user?.displayName||'—';
+  byId('current-user-role').textContent=(state.auth?.user?.roleNames||[]).join(' / ')||'未分配角色';
+  document.querySelectorAll('[data-permission]').forEach(el=>el.classList.toggle('hidden',!permissions.has(el.dataset.permission)));
+  document.querySelectorAll('[data-permission-group]').forEach(group=>{
+    const visible=[...group.querySelectorAll('[data-permission]')].some(el=>permissions.has(el.dataset.permission));
+    group.classList.toggle('hidden',!visible);
+  });
+}
+
+document.addEventListener('click',event=>{
+  const target=event.target.closest('[data-permission]');
+  if(!target)return;
+  if(!hasPermission(target.dataset.permission)){
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    toast(`当前账号没有“${permissionFriendly[target.dataset.permission]||target.dataset.permission}”权限。`,'error');
+  }
+},true);
+
+async function route(){
+  if(!state.auth?.authenticated)return;
+  try{
+    if(!state.master)await loadMaster();
+    const path=location.hash.replace(/^#\/?/,'')||'dashboard';
+    const[routeName,id]=path.split('/');
+    const routePermissions={dashboard:'DASHBOARD_VIEW',deliverables:'DELIVERY_VIEW','product-baselines':'BASELINE_VIEW',changes:'CHANGE_VIEW',analytics:'ANALYTICS_VIEW',users:'USER_VIEW',roles:'ROLE_VIEW',settings:'MASTERDATA_VIEW'};
+    const required=routePermissions[routeName];
+    if(required&&!hasPermission(required)){
+      if(hasPermission('DASHBOARD_VIEW'))location.hash='#/dashboard';
+      else{state.route='forbidden';content.innerHTML='<div class="card"><div class="empty">当前账号没有访问该页面的权限。</div></div>';setPage('无权限','当前账号没有访问该页面的权限');}
+      return;
+    }
+    state.route=routeName;
+    content.innerHTML='<div class="loading">正在加载…</div>';
+    if(routeName==='dashboard')return renderDashboard();
+    if(routeName==='deliverables'&&id)return renderDeliverableDetail(Number(id));
+    if(routeName==='deliverables')return renderDeliverables();
+    if(routeName==='product-baselines')return renderProductBaselines();
+    if(routeName==='changes')return renderChanges();
+    if(routeName==='analytics')return renderAnalytics();
+    if(routeName==='users')return renderUsers();
+    if(routeName==='roles')return renderRoles();
+    if(routeName==='settings')return renderSettings();
+    if(hasPermission('DASHBOARD_VIEW'))location.hash='#/dashboard';
+  }catch(error){content.innerHTML=`<div class="card"><div class="empty">页面加载失败：${esc(error.message)}</div></div>`;toast(error.message,'error');}
+}
+
+function rolePermissionGroups(permissions,selected,disabled=false){
+  const groups={};
+  permissions.forEach(p=>(groups[p.category]??=[]).push(p));
+  return Object.entries(groups).map(([category,items])=>`<div class="permission-group"><h4>${esc(category)}</h4><div class="field-check-grid">${items.map(p=>`<label class="field-check"><input type="checkbox" name="permissionCodes" value="${esc(p.code)}" ${selected.has(p.code)?'checked':''} ${disabled?'disabled':''}><span>${esc(permissionFriendly[p.code]||p.name)}</span></label>`).join('')}</div></div>`).join('');
+}
+
+function dataScopeDimensionHtml(definition,selected,disabled){
+  const values=selected.filter(x=>x.dimension===definition.code);
+  const all=values.some(x=>x.scopeType==='ALL');
+  const selectedValues=new Set(values.filter(x=>x.scopeType==='INCLUDE').map(x=>x.scopeValue));
+  return `<div class="scope-dimension" data-scope-dimension="${definition.code}"><div class="field-label">${esc(definition.name)}</div><div class="field-check-grid"><label class="field-check"><input type="radio" name="scopeType_${definition.code}" value="ALL" ${all||!values.length?'checked':''} ${disabled?'disabled':''}><span>全部${esc(definition.name)}</span></label><label class="field-check"><input type="radio" name="scopeType_${definition.code}" value="INCLUDE" ${all?'':'checked'} ${disabled?'disabled':''}><span>指定范围</span></label></div><div class="field-check-grid scope-options" data-scope-options="${definition.code}">${definition.options.map(x=>`<label class="field-check"><input type="checkbox" name="scopeValue_${definition.code}" value="${esc(x.value)}" ${selectedValues.has(x.value)?'checked':''} ${disabled?'disabled':''}><span>${esc(x.name)}</span></label>`).join('')}</div></div>`;
+}
+
+async function openRoleEdit(id){
+  const [detail,data,schema]=await Promise.all([api(`/internal/roles/${id}`),api('/internal/roles'),api('/internal/roles/data-scope-schema')]);
+  const selected=new Set(detail.permissions||[]);
+  const isSystem=detail.role.isSystemRole;
+  const body=`<form id="role-permission-form"><div class="form-grid"><div class="field"><label>角色名称 *</label><input name="name" value="${esc(detail.role.name)}" required ${isSystem?'disabled':''}></div><div class="field"><label>角色编码</label><input value="${esc(detail.role.code)}" disabled></div></div><div class="section-divider"><h4>功能权限</h4><p class="form-hint">审批、发布、驳回、实施、验证等均属于普通功能权限。</p>${rolePermissionGroups(data.permissions||[],selected,isSystem)}</div><div class="section-divider"><h4>数据权限</h4><p class="form-hint">仅按部门、项目、交付物类型限制数据。未配置某个维度表示该维度不额外限制；三个维度均未配置时没有业务数据访问权。</p>${schema.dimensions.map(d=>dataScopeDimensionHtml(d,detail.dataScopes||[],isSystem)).join('')}</div>${isSystem?'<div class="notice-panel">系统管理员是内置全权限角色，功能权限和三个数据维度均固定为全部。</div>':''}</form>`;
+  showModal('配置角色权限',body,{submitText:isSystem?'关闭':'保存',onSubmit:isSystem?async close=>close():async close=>{
+    const form=byId('role-permission-form');
+    const permissionCodes=[...form.querySelectorAll('input[name="permissionCodes"]:checked')].map(x=>x.value);
+    const dataScopes=[];
+    for(const dimension of schema.dimensions){
+      const type=form.querySelector(`input[name="scopeType_${dimension.code}"]:checked`)?.value;
+      if(type==='ALL')dataScopes.push({dimension:dimension.code,scopeType:'ALL',scopeValue:''});
+      else if(type==='INCLUDE')form.querySelectorAll(`input[name="scopeValue_${dimension.code}"]:checked`).forEach(x=>dataScopes.push({dimension:dimension.code,scopeType:'INCLUDE',scopeValue:x.value}));
+    }
+    await api(`/internal/roles/${id}/policy`,{method:'PUT',body:JSON.stringify({permissionCodes,dataScopes})});
+    if(!detail.role.isSystemRole)await api(`/internal/roles/${id}`,{method:'PUT',body:JSON.stringify({name:form.elements.name.value,code:detail.role.code,description:detail.role.description,isEnabled:detail.role.isEnabled,revision:detail.role.revision})});
+    close();toast('角色权限已保存。');await renderRoles();
+  }});
+}
+
+async function openRoleCreate(){
+  showModal('新建角色',`<form id="role-create-form"><div class="field"><label>角色名称 *</label><input name="name" required placeholder="如：项目负责人"></div><div class="field"><label>角色编码 *</label><input name="code" required placeholder="如：PROJECT_OWNER"></div><div class="field"><label>说明</label><textarea name="description"></textarea></div></form>`,{submitText:'创建角色',onSubmit:async close=>{
+    const form=byId('role-create-form');if(!form.reportValidity())throw new Error('请填写角色名称和角色编码。');
+    const f=new FormData(form);const result=await api('/internal/roles',{method:'POST',body:JSON.stringify({name:f.get('name'),code:f.get('code'),description:f.get('description'),isEnabled:true})});
+    close();toast('角色已创建，请继续配置权限。');await renderRoles();if(result?.id)await openRoleEdit(Number(result.id));
+  }});
+}
+
+async function renderRoles(){
+  setPage('角色权限','按职责配置功能权限和数据权限');
+  const data=await api('/internal/roles');
+  content.innerHTML=`<section class="card"><div class="card-head"><div><h3>角色</h3><p class="muted section-note">系统管理员默认拥有全部权限；自定义角色默认没有任何权限。</p></div>${hasPermission('ROLE_CREATE')?'<button type="button" id="new-role" class="btn btn-primary" data-permission="ROLE_CREATE">+ 新建角色</button>':''}</div><div class="table-wrap"><table><thead><tr><th>角色名称</th><th>角色编码</th><th>说明</th><th>用户数</th><th>状态</th><th>操作</th></tr></thead><tbody>${data.items.map(r=>`<tr><td>${esc(r.name)} ${r.isSystemRole?'<span class="badge">系统</span>':''}</td><td class="code">${esc(r.code)}</td><td>${esc(r.description||'—')}</td><td>${r.userCount}</td><td>${r.isEnabled?'启用':'停用'}</td><td><div class="inline-actions">${hasPermission('ROLE_PERMISSION_EDIT')?`<button type="button" class="btn btn-light btn-sm" data-role-config="${r.id}" data-permission="ROLE_PERMISSION_EDIT">配置权限</button>`:''}${!r.isSystemRole&&hasPermission('ROLE_EDIT')?`<button type="button" class="btn btn-light btn-sm" data-role-edit="${r.id}" data-permission="ROLE_EDIT">编辑</button>`:''}${!r.isSystemRole&&hasPermission('ROLE_DELETE')?`<button type="button" class="btn btn-danger btn-sm" data-role-delete="${r.id}" data-permission="ROLE_DELETE">删除</button>`:''}</div></td></tr>`).join('')}</tbody></table></div></section>`;
+  byId('new-role')?.addEventListener('click',openRoleCreate);
+  content.querySelectorAll('[data-role-config]').forEach(b=>b.onclick=()=>openRoleEdit(Number(b.dataset.roleConfig)));
+  content.querySelectorAll('[data-role-edit]').forEach(b=>b.onclick=async()=>{
+    const role=data.items.find(x=>x.id===Number(b.dataset.roleEdit));
+    showModal('编辑角色',`<form id="role-base-form"><div class="field"><label>角色名称 *</label><input name="name" value="${esc(role.name)}" required></div><div class="field"><label>角色编码</label><input value="${esc(role.code)}" disabled></div><div class="field"><label>说明</label><textarea name="description">${esc(role.description||'')}</textarea></div><label class="check-line"><input type="checkbox" name="isEnabled" ${role.isEnabled?'checked':''}>角色启用</label></form>`,{submitText:'保存',onSubmit:async close=>{const f=new FormData(byId('role-base-form'));await api(`/internal/roles/${role.id}`,{method:'PUT',body:JSON.stringify({name:f.get('name'),code:role.code,description:f.get('description'),isEnabled:f.has('isEnabled'),revision:role.revision})});close();toast('角色已更新。');await renderRoles();}});
+  });
+  content.querySelectorAll('[data-role-delete]').forEach(b=>b.onclick=async()=>{const role=data.items.find(x=>x.id===Number(b.dataset.roleDelete));const result=await confirmAction('删除角色',`确认删除角色“${role.name}”吗？`,{submitText:'确认删除',danger:true});if(!result.confirmed)return;await api(`/internal/roles/${role.id}`,{method:'DELETE'});toast('角色已删除。');await renderRoles();});
+}
