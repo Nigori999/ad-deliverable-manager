@@ -37,7 +37,7 @@ async function loadDeliverables() {
       <td class="code">${esc(x.code)}</td><td><strong>${esc(x.name)}</strong><div class="muted">对象：${esc(x.objectCode)}</div></td>
       <td>${esc(x.department)}<div class="muted">${esc(x.type)}</div></td><td>${esc(x.project)}</td>
       <td>${esc(x.currentVersion || '—')}</td><td>${statusBadge(x.versionStatus || 'DRAFT')}</td><td>${esc(x.responsiblePerson)}</td>
-      <td>${esc(confidentialityNames[x.confidentiality] || x.confidentiality)}<div class="muted">${shareNames[x.sharePolicy] || x.sharePolicy}</div></td>
+      <td>${esc(confidentialityNames[x.confidentiality] || x.confidentiality)}<div class="muted">${esc(shareNames[x.sharePolicy] || x.sharePolicy)}</div></td>
       <td>${esc(fmtDate(x.updatedAt))}</td><td><div class="inline-actions"><a class="btn btn-light btn-sm" href="#/deliverables/${x.id}">详情</a>${x.serverPath ? `<button type="button" class="btn btn-light btn-sm copy-path" data-path="${esc(x.serverPath)}">复制路径</button>` : ''}</div></td>
     </tr>`).join('')}</tbody></table>` : '<div class="empty">没有符合条件的交付物</div>';
   document.querySelectorAll('.copy-path').forEach(btn => btn.onclick = () => copyText(btn.dataset.path));
@@ -135,7 +135,43 @@ function renderTypeFields(typeCode) {
     </div></div>`,
     TC: `<div class="form-section"><h4>测试用例专属信息</h4><div class="form-grid">
       <div class="field"><label>测试级别</label><input name="testLevel"></div><div class="field"><label>测试模块</label><input name="testModule"></div>
-      <div class="field"><label>上游FR编码</label><input name="upstreamFrCode"></div><div class="field"><label>上游FR版本</label><input name="upstreamFrVersion"></div>`
+      <div class="field"><label>上游FR编码</label><input name="upstreamFrCode"></div><div class="field"><label>上游FR版本</label><input name="upstreamFrVersion"></div>
+      <div class="field"><label>用例数量</label><input type="number" min="0" name="caseCount"></div><div class="field"><label>适用软件版本</label><input name="applicableSoftwareVersion"></div>
+      <div class="field"><label>自动化用例数</label><input type="number" min="0" name="automatedCaseCount"></div><div class="field"><label>手工用例数</label><input type="number" min="0" name="manualCaseCount"></div>
+      <div class="field"><label>测试负责人</label><input name="testOwner"></div><div class="field"><label>测试环境</label><input name="testEnvironment"></div>
+      <div class="field span-2"><label>覆盖场景</label><textarea name="coverageScope"></textarea></div>
+    </div></div>`
   };
   root.innerHTML = blocks[typeCode] || '';
+}
+
+function buildVersionPayload(f, typeCode, prefix = '') {
+  const numOrNull = name => f.get(name) ? Number(f.get(name)) : null;
+  const payload = {
+    internalVersion: f.get(prefix + 'internalVersion'), originalVersion: f.get(prefix + 'originalVersion'),
+    originalFileName: f.get(prefix + 'originalFileName'), serverPath: f.get(prefix + 'serverPath'),
+    hashAlgorithm: f.get(prefix + 'hashAlgorithm'), hashValue: f.get(prefix + 'hashValue'),
+    changeSummary: f.get(prefix + 'changeSummary'), author: f.get(prefix + 'author'),
+    plannedReleaseDate: f.get(prefix + 'plannedReleaseDate') || null, operator: operatorName()
+  };
+  if (typeCode === 'SWP') payload.hardware = {
+    hardwareCategory: f.get('hardwareCategory'), hardwareModel: f.get('hardwareModel'), supplierName: f.get('supplierName'),
+    softwarePackageType: f.get('softwarePackageType'), supplierPartNumber: f.get('supplierPartNumber'), internalPartNumber: f.get('internalPartNumber'),
+    compatibleHardwareVersion: f.get('compatibleHardwareVersion'), compatiblePlatform: f.get('compatiblePlatform'), flashMethod: f.get('flashMethod'),
+    flashTool: f.get('flashTool'), dependencyDescription: f.get('dependencyDescription'), releaseNotePath: f.get('releaseNotePath'), flashGuidePath: f.get('flashGuidePath'), remark: f.get('remark')
+  };
+  if (typeCode === 'PRD') payload.prd = {
+    productModule: f.get('productModule'), functionName: f.get('functionName'), requirementSource: f.get('requirementSource'), targetVehicle: f.get('targetVehicle'),
+    targetProductVersion: f.get('targetProductVersion'), targetMilestone: f.get('targetMilestone'), productOwner: f.get('productOwner'), reviewers: f.get('reviewers'), referenceBasis: f.get('referenceBasis'), inScope: f.get('inScope'), outOfScope: f.get('outOfScope')
+  };
+  if (typeCode === 'FR') payload.fr = {
+    systemName: f.get('systemName'), subsystemName: f.get('subsystemName'), functionModule: f.get('functionModule'), upstreamPrdCode: f.get('upstreamPrdCode'),
+    upstreamPrdVersion: f.get('upstreamPrdVersion'), functionOwner: f.get('functionOwner'), systemOwner: f.get('systemOwner'), targetSoftwareBaseline: f.get('targetSoftwareBaseline'), targetMilestone: f.get('frTargetMilestone'), interfaceImpact: f.get('interfaceImpact'), safetyLevel: f.get('safetyLevel')
+  };
+  if (typeCode === 'TC') payload.testCase = {
+    testLevel: f.get('testLevel'), testModule: f.get('testModule'), upstreamFrCode: f.get('upstreamFrCode'), upstreamFrVersion: f.get('upstreamFrVersion'),
+    caseCount: numOrNull('caseCount'), coverageScope: f.get('coverageScope'), testEnvironment: f.get('testEnvironment'), testOwner: f.get('testOwner'), applicableSoftwareVersion: f.get('applicableSoftwareVersion'),
+    automatedCaseCount: numOrNull('automatedCaseCount'), manualCaseCount: numOrNull('manualCaseCount')
+  };
+  return payload;
 }
