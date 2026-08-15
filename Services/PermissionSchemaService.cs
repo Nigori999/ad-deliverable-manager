@@ -24,6 +24,7 @@ CREATE INDEX IF NOT EXISTS IX_UserRoles_User ON UserRoles(UserId);CREATE INDEX I
         await EnsureSystemAdminRoleAsync(ct);
         await SeedPermissionsAsync(ct);
         await EnsureSystemAdminPolicyAsync(ct);
+        await MigrateLegacySystemAdminBindingsAsync(ct);
     }
 
     private async Task EnsureSystemAdminRoleAsync(CancellationToken ct)
@@ -54,8 +55,8 @@ CREATE INDEX IF NOT EXISTS IX_UserRoles_User ON UserRoles(UserId);CREATE INDEX I
         var roleId=Convert.ToInt32(await role.ExecuteScalarAsync(ct)??0);
         if(roleId<=0)return;
 
-        // Do not only seed when the role is empty: PermissionCatalog grows over time.
-        // Every enabled catalog permission must remain available to the system administrator.
+        // System administrator is the built-in full-access role. Keep it synchronized
+        // with the catalog so newly introduced Permission Codes become available too.
         foreach(var p in PermissionCatalog.All)
         {
             await using var cmd=c.CreateCommand();
@@ -71,5 +72,22 @@ CREATE INDEX IF NOT EXISTS IX_UserRoles_User ON UserRoles(UserId);CREATE INDEX I
             cmd.Parameters.AddWithValue("$role",roleId);cmd.Parameters.AddWithValue("$node",n.Code);
             await cmd.ExecuteNonQueryAsync(ct);
         }
+    }
+
+    private async Task MigrateLegacySystemAdminBindingsAsync(CancellationToken ct)
+    {
+        await using var c=await _database.OpenConnectionAsync(ct);
+        await using var cmd=c.CreateCommand();
+        // Existing databases may contain an older IsSystemRole role (for example ADMIN).
+        // Preserve its users by additionally binding them to the canonical SYSTEM_ADMIN role.
+        cmd.CommandText="""
+INSERT OR IGNORE INTO UserRoles(UserId,RoleId)
+SELECT ur.UserId, canonical.Id
+FROM UserRoles ur
+JOIN Roles legacy ON legacy.Id=ur.RoleId AND legacy.IsSystemRole=1 AND legacy.Code<>$canonicalCode
+JOIN Roles canonical ON canonical.Code=$canonicalCode AND canonical.IsEnabled=1
+""";
+        cmd.Parameters.AddWithValue("$canonicalCode",AppRoles.SystemAdminCode);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 }
