@@ -13,6 +13,7 @@ public sealed class PermissionSchemaService
         await using var c = await _database.OpenConnectionAsync(ct);
         await using var cmd = c.CreateCommand();
         cmd.CommandText = """
+DROP TABLE IF EXISTS RoleWorkflowNodes;
 CREATE TABLE IF NOT EXISTS Roles(Id INTEGER PRIMARY KEY AUTOINCREMENT,Code TEXT NOT NULL UNIQUE COLLATE NOCASE,Name TEXT NOT NULL UNIQUE,Description TEXT,IsEnabled INTEGER NOT NULL DEFAULT 1,IsSystemRole INTEGER NOT NULL DEFAULT 0,CreatedBy TEXT NOT NULL,CreatedAt TEXT NOT NULL,UpdatedAt TEXT NOT NULL,Revision INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS Permissions(Id INTEGER PRIMARY KEY AUTOINCREMENT,Code TEXT NOT NULL UNIQUE,Name TEXT NOT NULL,Category TEXT NOT NULL,IsEnabled INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS RolePermissions(RoleId INTEGER NOT NULL,PermissionId INTEGER NOT NULL,PRIMARY KEY(RoleId,PermissionId),FOREIGN KEY(RoleId) REFERENCES Roles(Id) ON DELETE CASCADE,FOREIGN KEY(PermissionId) REFERENCES Permissions(Id) ON DELETE CASCADE);
@@ -21,6 +22,15 @@ CREATE TABLE IF NOT EXISTS RoleDataScopes(Id INTEGER PRIMARY KEY AUTOINCREMENT,R
 CREATE INDEX IF NOT EXISTS IX_UserRoles_User ON UserRoles(UserId);CREATE INDEX IF NOT EXISTS IX_UserRoles_Role ON UserRoles(RoleId);CREATE INDEX IF NOT EXISTS IX_RolePermissions_Role ON RolePermissions(RoleId);CREATE INDEX IF NOT EXISTS IX_RoleDataScopes_RoleDimension ON RoleDataScopes(RoleId,Dimension);
 """;
         await cmd.ExecuteNonQueryAsync(ct);
+
+        await using var cleanup = c.CreateCommand();
+        cleanup.CommandText = "DELETE FROM RoleDataScopes WHERE Dimension NOT IN ('DEPARTMENT','PROJECT','TYPE')";
+        await cleanup.ExecuteNonQueryAsync(ct);
+
+        var catalogCodes = string.Join(",", PermissionCatalog.All.Select(x => $"'{x.Code.Replace("'", "''")}'"));
+        await using var permissionCleanup = c.CreateCommand();
+        permissionCleanup.CommandText = $"DELETE FROM Permissions WHERE Code NOT IN ({catalogCodes})";
+        await permissionCleanup.ExecuteNonQueryAsync(ct);
 
         await SeedPermissionsAsync(c, ct);
         var systemRoleId = await EnsureSystemAdminRoleAsync(c, ct);
