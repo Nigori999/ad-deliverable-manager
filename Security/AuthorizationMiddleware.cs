@@ -6,168 +6,40 @@ public sealed class AuthorizationMiddleware
 {
     private readonly RequestDelegate _next;
     public AuthorizationMiddleware(RequestDelegate next) => _next = next;
-
     public async Task InvokeAsync(HttpContext context)
     {
-        var path = context.Request.Path.Value ?? "";
-        if (!path.StartsWith("/internal", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("/internal/auth/", StringComparison.OrdinalIgnoreCase) ||
-            path.Equals("/internal/system/health", StringComparison.OrdinalIgnoreCase))
-        {
-            await _next(context);
-            return;
-        }
-
-        var policy = Resolve(context.Request.Method, path);
-        if (policy is null)
-        {
-            await Deny(context, "该接口尚未配置权限策略，请联系管理员。");
-            return;
-        }
-
-        var permissions = context.RequestServices.GetRequiredService<PermissionService>();
-        var userId = context.User.GetUserId();
-        var deliverableId = await ResolveDeliverableIdAsync(context, permissions);
-        if (!await permissions.HasPermissionAsync(userId, policy.Permission, deliverableId, context.RequestAborted))
-        {
-            await Deny(context, policy.Message);
-            return;
-        }
-
+        var path=context.Request.Path.Value??"";
+        if(!path.StartsWith("/internal",StringComparison.OrdinalIgnoreCase)||path.StartsWith("/internal/auth/",StringComparison.OrdinalIgnoreCase)||path.Equals("/internal/system/health",StringComparison.OrdinalIgnoreCase)){await _next(context);return;}
+        var policy=Resolve(context.Request.Method,path);if(policy is null){await Deny(context,"该接口尚未配置权限策略，请联系管理员。");return;}
+        var permissions=context.RequestServices.GetRequiredService<PermissionService>();var deliverableId=await ResolveDeliverableIdAsync(context,permissions);
+        if(!await permissions.HasPermissionAsync(context.User.GetUserId(),policy.Permission,deliverableId,context.RequestAborted)){await Deny(context,policy.Message);return;}
         await _next(context);
     }
-
-    private static Policy? Resolve(string method, string path)
+    private static Policy? Resolve(string method,string path)
     {
-        if (path.StartsWith("/internal/dashboard", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.DashboardView, "当前账号没有查看仪表盘的权限。");
-        if (path.StartsWith("/internal/analytics", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.AnalyticsView, "当前账号没有查看完整度分析的权限。");
-
-        if (path.StartsWith("/internal/users", StringComparison.OrdinalIgnoreCase))
-        {
-            if (path.EndsWith("/reset-password", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.UserResetPassword, "当前账号没有重置用户密码的权限。");
-            if (method.Equals("GET", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.UserView, "当前账号没有查看用户的权限。");
-            if (method.Equals("POST", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.UserCreate, "当前账号没有新增用户的权限。");
-            if (method.Equals("PUT", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.UserEdit, "当前账号没有编辑用户的权限。");
-            if (method.Equals("DELETE", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.UserEdit, "当前账号没有删除用户的权限。");
-        }
-
-        if (path.StartsWith("/internal/roles", StringComparison.OrdinalIgnoreCase))
-        {
-            if (path.EndsWith("/policy", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.RolePermissionEdit, "当前账号没有配置角色权限的权限。");
-            if (method.Equals("GET", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.RoleView, "当前账号没有查看角色的权限。");
-            if (method.Equals("POST", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.RoleCreate, "当前账号没有新增角色的权限。");
-            if (method.Equals("PUT", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.RoleEdit, "当前账号没有编辑角色的权限。");
-            if (method.Equals("DELETE", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.RoleDelete, "当前账号没有删除角色的权限。");
-        }
-
-        if (path.StartsWith("/internal/product-baselines", StringComparison.OrdinalIgnoreCase))
-        {
-            if (method.Equals("GET", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.BaselineView, "当前账号没有查看产品基线的权限。");
-            if (path.EndsWith("/publish", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.BaselinePublish, "当前账号没有发布产品基线的权限。");
-            if (path.EndsWith("/copy", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.BaselineCopy, "当前账号没有复制产品基线的权限。");
-            if (path.EndsWith("/changes", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.BaselineChange, "当前账号没有变更产品基线的权限。");
-            if (method.Equals("POST", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.BaselineCreate, "当前账号没有新增产品基线的权限。");
-            if (method.Equals("PUT", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.BaselineEdit, "当前账号没有编辑产品基线的权限。");
-        }
-
-        if (path.StartsWith("/internal/system/backup", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.SystemBackup, "当前账号没有数据库备份的权限。");
-        if (path.StartsWith("/internal/system/audit-logs", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.AuditView, "当前账号没有查看审计日志的权限。");
-
-        if (path.StartsWith("/internal/master-data", StringComparison.OrdinalIgnoreCase))
-        {
-            if (method.Equals("GET", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.MasterDataView, "当前账号没有查看基础数据的权限。");
-            if (method.Equals("POST", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.MasterDataCreate, "当前账号没有新增基础数据的权限。");
-            if (method.Equals("PUT", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.MasterDataEdit, "当前账号没有编辑基础数据的权限。");
-            if (method.Equals("DELETE", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.MasterDataDelete, "当前账号没有删除基础数据的权限。");
-        }
-
-        if (path.StartsWith("/internal/exports/", StringComparison.OrdinalIgnoreCase))
-        {
-            if (path.Contains("deliverables", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.DeliveryExport, "当前账号没有导出交付物的权限。");
-            if (path.Contains("changes", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.ChangeExport, "当前账号没有导出变更的权限。");
-            return new(PermissionCatalog.DeliveryView, "当前账号没有查看导出字段的权限。");
-        }
-
-        if (path.StartsWith("/internal/change-workflow", StringComparison.OrdinalIgnoreCase)) return method.Equals("GET", StringComparison.OrdinalIgnoreCase) ? new(PermissionCatalog.ChangeView, "当前账号没有查看变更流程的权限。") : new(PermissionCatalog.ChangeCreate, "当前账号没有发起变更的权限。");
-        if (path.StartsWith("/internal/version-details", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.VersionView, "当前账号没有查看版本详情的权限。");
-
-        if (path.StartsWith("/internal/relations", StringComparison.OrdinalIgnoreCase))
-        {
-            if (method.Equals("GET", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.RelationView, "当前账号没有查看关联关系的权限。");
-            if (method.Equals("POST", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.RelationCreate, "当前账号没有建立关联关系的权限。");
-            if (method.Equals("DELETE", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.RelationDelete, "当前账号没有删除关联关系的权限。");
-        }
-
-        if (path.StartsWith("/internal/workflow/versions/", StringComparison.OrdinalIgnoreCase)) return VersionPolicy(path);
-        if (path.StartsWith("/internal/workflow/changes/", StringComparison.OrdinalIgnoreCase)) return ChangePolicy(path);
-
-        if (path.StartsWith("/internal/versioning", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.VersionCreate, "当前账号没有创建版本的权限。");
-
-        if (path.StartsWith("/internal/deliverables", StringComparison.OrdinalIgnoreCase))
-        {
-            if (method.Equals("GET", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.DeliveryView, "当前账号没有查看交付物的权限。");
-            if (path.Contains("/archive", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.DeliveryArchive, "当前账号没有归档交付物的权限。");
-            if (path.Contains("/versions/", StringComparison.OrdinalIgnoreCase)) return VersionPolicy(path);
-            if (path.EndsWith("/versions", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.VersionCreate, "当前账号没有创建版本的权限。");
-            if (method.Equals("POST", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.DeliveryCreate, "当前账号没有新增交付物的权限。");
-            if (method.Equals("PUT", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.DeliveryEdit, "当前账号没有编辑交付物的权限。");
-        }
-
-        if (path.StartsWith("/internal/changes", StringComparison.OrdinalIgnoreCase))
-        {
-            if (method.Equals("GET", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.ChangeView, "当前账号没有查看变更的权限。");
-            if (method.Equals("POST", StringComparison.OrdinalIgnoreCase) && path.TrimEnd('/').Equals("/internal/changes", StringComparison.OrdinalIgnoreCase)) return new(PermissionCatalog.ChangeCreate, "当前账号没有发起变更的权限。");
-            return ChangePolicy(path);
-        }
-
+        if(path.StartsWith("/internal/dashboard",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.DashboardView,"当前账号没有查看仪表盘的权限。");
+        if(path.StartsWith("/internal/analytics",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.AnalyticsView,"当前账号没有查看完整度分析的权限。");
+        if(path.StartsWith("/internal/users",StringComparison.OrdinalIgnoreCase)){if(path.EndsWith("/reset-password",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.UserResetPassword,"当前账号没有重置用户密码的权限。");if(method=="GET")return new(PermissionCatalog.UserView,"当前账号没有查看用户的权限。");if(method=="POST")return new(PermissionCatalog.UserCreate,"当前账号没有新增用户的权限。");if(method=="PUT")return new(PermissionCatalog.UserEdit,"当前账号没有编辑用户的权限。");if(method=="DELETE")return new(PermissionCatalog.UserEdit,"当前账号没有删除用户的权限。");}
+        if(path.StartsWith("/internal/roles",StringComparison.OrdinalIgnoreCase)){if(path.EndsWith("/policy",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.RolePermissionEdit,"当前账号没有配置角色权限的权限。");if(method=="GET")return new(PermissionCatalog.RoleView,"当前账号没有查看角色的权限。");if(method=="POST")return new(PermissionCatalog.RoleCreate,"当前账号没有新增角色的权限。");if(method=="PUT")return new(PermissionCatalog.RoleEdit,"当前账号没有编辑角色的权限。");if(method=="DELETE")return new(PermissionCatalog.RoleDelete,"当前账号没有删除角色的权限。");}
+        if(path.StartsWith("/internal/product-baselines",StringComparison.OrdinalIgnoreCase)){if(method=="GET")return new(PermissionCatalog.BaselineView,"当前账号没有查看产品基线的权限。");if(path.EndsWith("/publish",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.BaselinePublish,"当前账号没有发布产品基线的权限。");if(path.EndsWith("/copy",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.BaselineCopy,"当前账号没有复制产品基线的权限。");if(path.EndsWith("/changes",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.BaselineChange,"当前账号没有变更产品基线的权限。");if(method=="POST")return new(PermissionCatalog.BaselineCreate,"当前账号没有新增产品基线的权限。");if(method=="PUT")return new(PermissionCatalog.BaselineEdit,"当前账号没有编辑产品基线的权限。");}
+        if(path.StartsWith("/internal/system/backup",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.SystemBackup,"当前账号没有数据库备份的权限。");
+        if(path.StartsWith("/internal/system/audit-logs",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.AuditView,"当前账号没有查看审计日志的权限。");
+        if(path.StartsWith("/internal/master-data",StringComparison.OrdinalIgnoreCase)){if(method=="GET")return new(PermissionCatalog.MasterDataView,"当前账号没有查看基础数据的权限。");if(method=="POST")return new(PermissionCatalog.MasterDataCreate,"当前账号没有新增基础数据的权限。");if(method=="PUT")return new(PermissionCatalog.MasterDataEdit,"当前账号没有编辑基础数据的权限。");if(method=="DELETE")return new(PermissionCatalog.MasterDataDelete,"当前账号没有删除基础数据的权限。");}
+        if(path.StartsWith("/internal/exports/",StringComparison.OrdinalIgnoreCase)){if(path.Contains("deliverables",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.DeliveryExport,"当前账号没有导出交付物的权限。");if(path.Contains("changes",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.ChangeExport,"当前账号没有导出变更的权限。");return new(PermissionCatalog.DeliveryView,"当前账号没有查看导出字段的权限。");}
+        if(path.StartsWith("/internal/change-workflow",StringComparison.OrdinalIgnoreCase))return method=="GET"?new(PermissionCatalog.ChangeView,"当前账号没有查看变更流程的权限。"):new(PermissionCatalog.ChangeCreate,"当前账号没有发起变更的权限。");
+        if(path.StartsWith("/internal/version-details",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.VersionView,"当前账号没有查看版本详情的权限。");
+        if(path.StartsWith("/internal/relations",StringComparison.OrdinalIgnoreCase)){if(method=="GET")return new(PermissionCatalog.RelationView,"当前账号没有查看关联关系的权限。");if(method=="POST")return new(PermissionCatalog.RelationCreate,"当前账号没有建立关联关系的权限。");if(method=="DELETE")return new(PermissionCatalog.RelationDelete,"当前账号没有删除关联关系的权限。");}
+        if(path.StartsWith("/internal/workflow/versions/",StringComparison.OrdinalIgnoreCase))return VersionPolicy(path);
+        if(path.StartsWith("/internal/workflow/changes/",StringComparison.OrdinalIgnoreCase))return ChangePolicy(path);
+        if(path.StartsWith("/internal/versioning/changes/",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.ChangeVersionCreate,"当前账号没有创建变更版本的权限。");
+        if(path.StartsWith("/internal/versioning",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.VersionCreate,"当前账号没有创建版本的权限。");
+        if(path.StartsWith("/internal/deliverables",StringComparison.OrdinalIgnoreCase)){if(method=="GET")return new(PermissionCatalog.DeliveryView,"当前账号没有查看交付物的权限。");if(path.Contains("/archive",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.DeliveryArchive,"当前账号没有归档交付物的权限。");if(path.Contains("/versions/",StringComparison.OrdinalIgnoreCase))return VersionPolicy(path);if(path.EndsWith("/versions",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.VersionCreate,"当前账号没有创建版本的权限。");if(method=="POST")return new(PermissionCatalog.DeliveryCreate,"当前账号没有新增交付物的权限。");if(method=="PUT")return new(PermissionCatalog.DeliveryEdit,"当前账号没有编辑交付物的权限。");}
+        if(path.StartsWith("/internal/changes",StringComparison.OrdinalIgnoreCase)){if(method=="GET")return new(PermissionCatalog.ChangeView,"当前账号没有查看变更的权限。");if(method=="POST"&&path.TrimEnd('/').Equals("/internal/changes",StringComparison.OrdinalIgnoreCase))return new(PermissionCatalog.ChangeCreate,"当前账号没有发起变更的权限。");return ChangePolicy(path);}
         return null;
     }
-
-    private static Policy VersionPolicy(string path)
-    {
-        return path.Split('/').LastOrDefault()?.ToLowerInvariant() switch
-        {
-            "submit-review" => new(PermissionCatalog.VersionSubmit, "当前账号没有提交版本审批的权限。"),
-            "return-draft" => new(PermissionCatalog.VersionReturn, "当前账号没有退回版本修改的权限。"),
-            "approve" => new(PermissionCatalog.VersionApprove, "当前账号没有版本审批通过的权限。"),
-            "release" => new(PermissionCatalog.VersionRelease, "当前账号没有版本正式发布的权限。"),
-            "deprecate" => new(PermissionCatalog.VersionDeprecate, "当前账号没有废止版本的权限。"),
-            _ => new(PermissionCatalog.VersionView, "当前账号没有查看版本的权限。")
-        };
-    }
-
-    private static Policy ChangePolicy(string path)
-    {
-        return path.Split('/').LastOrDefault()?.ToLowerInvariant() switch
-        {
-            "approve" => new(PermissionCatalog.ChangeApprove, "当前账号没有批准变更的权限。"),
-            "reject" => new(PermissionCatalog.ChangeReject, "当前账号没有驳回变更的权限。"),
-            "start" => new(PermissionCatalog.ChangeStart, "当前账号没有开始实施变更的权限。"),
-            "verify" => new(PermissionCatalog.ChangeVerify, "当前账号没有提交变更验证的权限。"),
-            "close" => new(PermissionCatalog.ChangeClose, "当前账号没有关闭变更的权限。"),
-            _ => new(PermissionCatalog.ChangeView, "当前账号没有查看变更的权限。")
-        };
-    }
-
-    private static async Task<int?> ResolveDeliverableIdAsync(HttpContext context, PermissionService permissions)
-    {
-        var path = context.Request.Path.Value ?? "";
-        var parts = path.Trim('/').Split('/');
-        for (var i = 0; i < parts.Length - 1; i++)
-        {
-            if (parts[i].Equals("deliverables", StringComparison.OrdinalIgnoreCase) && int.TryParse(parts[i + 1], out var deliverableId)) return await permissions.ResolveDeliverableIdAsync(deliverableId, context.RequestAborted);
-            if (parts[i].Equals("version-details", StringComparison.OrdinalIgnoreCase) && int.TryParse(parts[i + 1], out var versionId)) return await permissions.ResolveDeliverableIdByVersionAsync(versionId, context.RequestAborted);
-            if (parts[i].Equals("versions", StringComparison.OrdinalIgnoreCase) && int.TryParse(parts[i + 1], out var versionId)) return await permissions.ResolveDeliverableIdByVersionAsync(versionId, context.RequestAborted);
-            if (parts[i].Equals("changes", StringComparison.OrdinalIgnoreCase) && int.TryParse(parts[i + 1], out var changeId)) return await permissions.ResolveDeliverableIdByChangeAsync(changeId, context.RequestAborted);
-        }
-        return null;
-    }
-
-    private static async Task Deny(HttpContext context, string message)
-    {
-        context.Response.StatusCode = 403;
-        await context.Response.WriteAsJsonAsync(new { message });
-    }
-
-    private sealed record Policy(string Permission, string Message);
+    private static Policy VersionPolicy(string path)=>path.Split('/').LastOrDefault()?.ToLowerInvariant() switch{"submit-review"=>new(PermissionCatalog.VersionSubmit,"当前账号没有提交版本审批的权限。"),"return-draft"=>new(PermissionCatalog.VersionReturn,"当前账号没有退回版本修改的权限。"),"approve"=>new(PermissionCatalog.VersionApprove,"当前账号没有版本审批通过的权限。"),"release"=>new(PermissionCatalog.VersionRelease,"当前账号没有版本正式发布的权限。"),"deprecate"=>new(PermissionCatalog.VersionDeprecate,"当前账号没有废止版本的权限。"),_=>new(PermissionCatalog.VersionView,"当前账号没有查看版本的权限。")};
+    private static Policy ChangePolicy(string path)=>path.Split('/').LastOrDefault()?.ToLowerInvariant() switch{"approve"=>new(PermissionCatalog.ChangeApprove,"当前账号没有批准变更的权限。"),"reject"=>new(PermissionCatalog.ChangeReject,"当前账号没有驳回变更的权限。"),"start"=>new(PermissionCatalog.ChangeStart,"当前账号没有开始实施变更的权限。"),"verify"=>new(PermissionCatalog.ChangeVerify,"当前账号没有提交变更验证的权限。"),"close"=>new(PermissionCatalog.ChangeClose,"当前账号没有关闭变更的权限。"),_=>new(PermissionCatalog.ChangeView,"当前账号没有查看变更的权限。")};
+    private static async Task<int?> ResolveDeliverableIdAsync(HttpContext context,PermissionService permissions){var parts=(context.Request.Path.Value??"").Trim('/').Split('/');for(var i=0;i<parts.Length-1;i++){if(parts[i].Equals("deliverables",StringComparison.OrdinalIgnoreCase)&&int.TryParse(parts[i+1],out var deliverableId))return await permissions.ResolveDeliverableIdAsync(deliverableId,context.RequestAborted);if(parts[i].Equals("version-details",StringComparison.OrdinalIgnoreCase)&&int.TryParse(parts[i+1],out var versionId))return await permissions.ResolveDeliverableIdByVersionAsync(versionId,context.RequestAborted);if(parts[i].Equals("versions",StringComparison.OrdinalIgnoreCase)&&int.TryParse(parts[i+1],out var versionId))return await permissions.ResolveDeliverableIdByVersionAsync(versionId,context.RequestAborted);if(parts[i].Equals("changes",StringComparison.OrdinalIgnoreCase)&&int.TryParse(parts[i+1],out var changeId))return await permissions.ResolveDeliverableIdByChangeAsync(changeId,context.RequestAborted);}return null;}
+    private static async Task Deny(HttpContext context,string message){context.Response.StatusCode=403;await context.Response.WriteAsJsonAsync(new{message});}
+    private sealed record Policy(string Permission,string Message);
 }
