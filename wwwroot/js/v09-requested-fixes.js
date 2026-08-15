@@ -1,6 +1,22 @@
 (() => {
-  function installSystemManagementMenu(){const nav=document.querySelector('.sidebar nav');if(!nav||nav.querySelector('[data-system-management]'))return;const links=['users','roles','settings'].map(route=>nav.querySelector(`a[data-route="${route}"]`)).filter(Boolean);if(!links.length)return;const group=document.createElement('details');group.className='nav-system-group';group.dataset.systemManagement='true';const summary=document.createElement('summary');summary.innerHTML='<span>⚙</span>系统管理';group.appendChild(summary);links.forEach(link=>group.appendChild(link));nav.insertBefore(group,links[0]);}
-  function updateSystemManagementVisibility(){const group=document.querySelector('[data-system-management]');if(!group)return;const visible=[...group.querySelectorAll('a[data-permission]')].some(a=>!a.classList.contains('hidden'));group.classList.toggle('hidden',!visible);}
+  function installSystemManagementMenu(){
+    const nav=document.querySelector('.sidebar nav');
+    if(!nav)return;
+    // index.html now owns the canonical system-management group. Do not move its
+    // child links again; doing so would detach them from data-permission-group.
+    if(nav.querySelector('.sidebar-group[data-permission-group="SYSTEM_MANAGEMENT"]'))return;
+    if(nav.querySelector('[data-system-management]'))return;
+    const links=['users','roles','settings'].map(route=>nav.querySelector(`a[data-route="${route}"]`)).filter(Boolean);
+    if(!links.length)return;
+    const group=document.createElement('details');group.className='nav-system-group';group.dataset.systemManagement='true';
+    const summary=document.createElement('summary');summary.innerHTML='<span>⚙</span>系统管理';group.appendChild(summary);links.forEach(link=>group.appendChild(link));nav.insertBefore(group,links[0]);
+  }
+  function updateSystemManagementVisibility(){
+    const group=document.querySelector('[data-system-management]');
+    if(!group)return;
+    const visible=[...group.querySelectorAll('a[data-permission]')].some(a=>!a.classList.contains('hidden'));
+    group.classList.toggle('hidden',!visible);
+  }
   if(!document.getElementById('v09-requested-fixes-style')){const style=document.createElement('style');style.id='v09-requested-fixes-style';style.textContent='.nav-system-group{border-radius:9px;overflow:hidden}.nav-system-group summary{list-style:none;cursor:pointer;padding:11px 12px;border-radius:9px;display:flex;gap:11px;align-items:center;font-size:14px}.nav-system-group summary::-webkit-details-marker{display:none}.nav-system-group[open] summary,.nav-system-group summary:hover{background:rgba(79,119,229,.22);color:#fff}.nav-system-group>a{margin-left:12px;padding:9px 12px!important;font-size:13px!important}.nav-system-group>a.active{box-shadow:inset 3px 0 #6e95ff}';document.head.appendChild(style);}
   const originalApplyRoleUiV09=window.applyRoleUi;if(typeof originalApplyRoleUiV09==='function'&&!originalApplyRoleUiV09.__v09RequestedWrapped){window.applyRoleUi=function(){originalApplyRoleUiV09();updateSystemManagementVisibility();};window.applyRoleUi.__v09RequestedWrapped=true;}
   installSystemManagementMenu();setTimeout(updateSystemManagementVisibility,0);
