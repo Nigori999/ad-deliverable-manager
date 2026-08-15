@@ -197,8 +197,43 @@ async function renderChanges() {
   if (hasPermission('CHANGE_CREATE')) byId('new-change').onclick = openChangeForm;
   byId('export-changes').onclick = () => openCsvExport('changes', { status: state.changeStatusFilter || null });
   byId('change-status-filter').onchange = event => { state.changeStatusFilter = event.target.value; renderChanges(); };
-  document.querySelectorAll('[data-change-action]').forEach(btn => btn.onclick = () => runChangeAction(btn));
+  document.querySelectorAll('[data-change-action]').forEach(btn => btn.onclick = () => handleChangeActionV070(btn, data.items));
   document.querySelectorAll('.create-change-version').forEach(btn => btn.onclick = () => { const change = data.items.find(x => x.id === Number(btn.dataset.changeId)); openVersionForm(change.deliverableId, change.typeCode, { changeId: change.id, changeSummary: `变更${change.code}：${change.reason}\n${change.content}`, returnToChanges: true }); });
+}
+
+async function handleChangeActionV070(button, items) {
+  const changeId = Number(button.dataset.changeId);
+  const action = String(button.dataset.changeAction || '').trim().toLowerCase();
+  const change = items.find(x => x.id === changeId);
+  if (!change) { toast('变更记录不存在，请刷新后重试。', 'error'); return; }
+  const permissionByAction = { approve:'CHANGE_APPROVE', reject:'CHANGE_APPROVE', start:'CHANGE_START', verify:'CHANGE_VERIFY', close:'CHANGE_CLOSE' };
+  const permission = permissionByAction[action];
+  if (!permission || !hasPermission(permission)) { toast('当前角色没有执行该变更操作的权限。', 'error'); return; }
+  let opinion = '';
+  if (action === 'approve' || action === 'reject') {
+    const result = await promptActionOpinion(action === 'approve' ? '批准变更' : '驳回变更', action === 'approve' ? '请填写评审意见。' : '请填写驳回原因。');
+    if (!result.confirmed) return;
+    opinion = result.value.trim();
+    if (!opinion) { toast('评审意见不能为空。', 'error'); return; }
+  } else {
+    const result = await confirmAction(action === 'start' ? '开始实施' : action === 'verify' ? '提交验证' : '确认关闭', `确定对 ${change.code} 执行“${button.textContent.trim()}”吗？`);
+    if (!result.confirmed) return;
+  }
+  button.disabled = true;
+  try {
+    await api(`/internal/changes/${changeId}/${action}`, { method: 'POST', body: JSON.stringify({ opinion, toVersionId: change.toVersionId || null }) });
+    toast(action === 'approve' ? '变更已批准。' : action === 'reject' ? '变更已驳回。' : '变更状态已更新。');
+    await renderChanges();
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message, 'error');
+  }
+}
+
+async function promptActionOpinion(title, hint) {
+  return new Promise(resolve => {
+    showModal(title, `<form id="change-opinion-form"><div class="form-hint">${esc(hint)}</div><div class="field"><label>评审意见 *</label><textarea name="opinion" rows="5" required></textarea></div></form>`, { submitText:'提交', onSubmit:async close=>{const form=byId('change-opinion-form');if(!form.reportValidity())throw new Error('请填写评审意见。');const value=form.elements.opinion.value;close();resolve({confirmed:true,value});} });
+  });
 }
 
 async function openChangeForm() {
