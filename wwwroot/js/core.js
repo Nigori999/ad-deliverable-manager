@@ -20,10 +20,6 @@ const esc = value => String(value ?? '')
   .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
 const byId = id => document.getElementById(id);
 const operatorName = () => state.auth?.user?.displayName || '系统用户';
-const roleCode = () => state.auth?.user?.roleCode || 'VIEWER';
-const hasRole = (...roles) => roles.includes(roleCode());
-const canEdit = () => hasRole('ADMIN', 'EDITOR');
-const canApprove = () => hasRole('ADMIN', 'APPROVER');
 const fmtDate = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
 const fmtDateOnly = value => value ? String(value).slice(0, 10) : '—';
 
@@ -128,37 +124,6 @@ function optionList(items, selected = '', emptyLabel = '全部') {
 }
 
 async function loadMaster() { state.master = await api('/internal/master-data'); }
-
-function applyRoleUi() {
-  document.querySelectorAll('[data-role]').forEach(el => el.classList.toggle('hidden', !hasRole(...el.dataset.role.split(','))));
-  byId('current-user-name').textContent = state.auth.user.displayName;
-  byId('current-user-role').textContent = roleNames[state.auth.user.roleCode] || state.auth.user.roleCode;
-}
-
-async function route() {
-  if (!state.auth?.authenticated) return;
-  try {
-    if (!state.master) await loadMaster();
-    const path = location.hash.replace(/^#\/?/, '') || 'dashboard';
-    const [routeName, id] = path.split('/');
-    if (routeName === 'users' && !hasRole('ADMIN')) { location.hash = '#/dashboard'; return; }
-    state.route = routeName;
-    content.innerHTML = '<div class="loading">正在加载…</div>';
-    if (routeName === 'dashboard') return renderDashboard();
-    if (routeName === 'deliverables' && id) return renderDeliverableDetail(Number(id));
-    if (routeName === 'deliverables') return renderDeliverables();
-    if (routeName === 'changes') return renderChanges();
-    if (routeName === 'analytics') return renderAnalytics();
-    if (routeName === 'product-baselines') return renderProductBaselines();
-    if (routeName === 'users') return renderUsers();
-    if (routeName === 'roles') return renderRoles();
-    if (routeName === 'settings') return renderSettings();
-    location.hash = '#/dashboard';
-  } catch (error) {
-    content.innerHTML = `<div class="card"><div class="empty">页面加载失败：${esc(error.message)}</div></div>`;
-    toast(error.message, 'error');
-  }
-}
 
 async function downloadCsv(url, payload, filePrefix) {
   const response = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
