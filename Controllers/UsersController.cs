@@ -1,4 +1,5 @@
 using AdDeliverableManager.Models;
+using AdDeliverableManager.Security;
 using AdDeliverableManager.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -53,7 +54,7 @@ public sealed class UsersController : ControllerBase
     {
         if (id == User.GetUserId()) return Conflict(new { message = "不能删除当前登录账号。" });
         await using var c = await _database.OpenConnectionAsync(ct);
-        await using var tx = await c.BeginTransactionAsync(ct);
+        using var tx = c.BeginTransaction();
         await using var q = c.CreateCommand(); q.Transaction = tx; q.CommandText = "SELECT Username,DisplayName FROM Users WHERE Id=$id"; q.Parameters.AddWithValue("$id", id);
         await using var r = await q.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) return NotFound(new { message = "用户不存在。" });
