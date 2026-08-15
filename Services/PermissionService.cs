@@ -20,11 +20,11 @@ public sealed class PermissionService
             JOIN RolePermissions rp ON rp.RoleId=r.Id
             JOIN Permissions p ON p.Id=rp.PermissionId AND p.IsEnabled=1 AND p.Code='{permissionCode.Replace("'","''")}'
             WHERE ur.UserId=$scopeUserId
-              AND ((NOT EXISTS (SELECT 1 FROM RoleDataScopes s0 WHERE s0.RoleId=r.Id))
-                OR ((NOT EXISTS (SELECT 1 FROM RoleDataScopes s1 WHERE s1.RoleId=r.Id AND s1.Dimension='DEPARTMENT') OR EXISTS (SELECT 1 FROM RoleDataScopes s1 WHERE s1.RoleId=r.Id AND s1.Dimension='DEPARTMENT' AND (s1.ScopeType='ALL' OR (s1.ScopeType='INCLUDE' AND s1.ScopeValue=CAST({a}.DepartmentId AS TEXT)))))
+              AND EXISTS (SELECT 1 FROM RoleDataScopes s0 WHERE s0.RoleId=r.Id)
+              AND ((NOT EXISTS (SELECT 1 FROM RoleDataScopes s1 WHERE s1.RoleId=r.Id AND s1.Dimension='DEPARTMENT') OR EXISTS (SELECT 1 FROM RoleDataScopes s1 WHERE s1.RoleId=r.Id AND s1.Dimension='DEPARTMENT' AND (s1.ScopeType='ALL' OR (s1.ScopeType='INCLUDE' AND s1.ScopeValue=CAST({a}.DepartmentId AS TEXT)))))
                 AND (NOT EXISTS (SELECT 1 FROM RoleDataScopes s2 WHERE s2.RoleId=r.Id AND s2.Dimension='PROJECT') OR EXISTS (SELECT 1 FROM RoleDataScopes s2 WHERE s2.RoleId=r.Id AND s2.Dimension='PROJECT' AND (s2.ScopeType='ALL' OR (s2.ScopeType='INCLUDE' AND s2.ScopeValue=CAST({a}.ProjectId AS TEXT)))))
                 AND (NOT EXISTS (SELECT 1 FROM RoleDataScopes s3 WHERE s3.RoleId=r.Id AND s3.Dimension='TYPE') OR EXISTS (SELECT 1 FROM RoleDataScopes s3 WHERE s3.RoleId=r.Id AND s3.Dimension='TYPE' AND (s3.ScopeType='ALL' OR (s3.ScopeType='INCLUDE' AND s3.ScopeValue=CAST({a}.DeliverableTypeId AS TEXT)))))
-              ))
+              )
         )";
     }
     private static async Task<bool> RoleHasPermissionAsync(SqliteConnection c,int roleId,string permissionCode,CancellationToken ct){await using var cmd=c.CreateCommand();cmd.CommandText="SELECT COUNT(*) FROM RolePermissions rp JOIN Permissions p ON p.Id=rp.PermissionId WHERE rp.RoleId=$role AND p.Code=$code AND p.IsEnabled=1";cmd.Parameters.AddWithValue("$role",roleId);cmd.Parameters.AddWithValue("$code",permissionCode);return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct))>0;}
