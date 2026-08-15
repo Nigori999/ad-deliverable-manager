@@ -4,6 +4,7 @@ namespace AdDeliverableManager.Services;
 public sealed class PermissionService
 {
     private readonly DatabaseService _database;public PermissionService(DatabaseService database)=>_database=database;
+    public PermissionService(DatabaseService database)=>_database=database;
     public async Task<int?> ResolveDeliverableIdAsync(int id,CancellationToken ct=default){await using var c=await _database.OpenConnectionAsync(ct);await using var cmd=c.CreateCommand();cmd.CommandText="SELECT Id FROM Deliverables WHERE Id=$id";cmd.Parameters.AddWithValue("$id",id);var value=await cmd.ExecuteScalarAsync(ct);return value is null?null:Convert.ToInt32(value);}
     public async Task<int?> ResolveDeliverableIdByVersionAsync(int versionId,CancellationToken ct=default){await using var c=await _database.OpenConnectionAsync(ct);await using var cmd=c.CreateCommand();cmd.CommandText="SELECT DeliverableId FROM DeliverableVersions WHERE Id=$id";cmd.Parameters.AddWithValue("$id",versionId);var value=await cmd.ExecuteScalarAsync(ct);return value is null?null:Convert.ToInt32(value);}
     public async Task<int?> ResolveDeliverableIdByChangeAsync(int changeId,CancellationToken ct=default){await using var c=await _database.OpenConnectionAsync(ct);await using var cmd=c.CreateCommand();cmd.CommandText="SELECT DeliverableId FROM ChangeRecords WHERE Id=$id";cmd.Parameters.AddWithValue("$id",changeId);var value=await cmd.ExecuteScalarAsync(ct);return value is null?null:Convert.ToInt32(value);}
@@ -12,29 +13,21 @@ public sealed class PermissionService
     public async Task<bool> HasPermissionAsync(int userId,string permissionCode,int? deliverableId=null,CancellationToken ct=default){await using var c=await _database.OpenConnectionAsync(ct);var roles=await GetRoleIdsAsync(c,userId,ct);foreach(var roleId in roles){if(!await RoleHasPermissionAsync(c,roleId,permissionCode,ct))continue;if(!deliverableId.HasValue||await MatchesDataScopeAsync(c,roleId,deliverableId.Value,ct))return true;}return false;}
     public async Task<bool> HasCreateScopeAsync(int userId,string permissionCode,int departmentId,int projectId,int typeId,CancellationToken ct=default){await using var c=await _database.OpenConnectionAsync(ct);var roles=await GetRoleIdsAsync(c,userId,ct);foreach(var roleId in roles){if(!await RoleHasPermissionAsync(c,roleId,permissionCode,ct))continue;if(await MatchesDataScopeAsync(c,roleId,departmentId,projectId,typeId,ct))return true;}return false;}
     public async Task<IReadOnlyList<int>> GetAllowedDeliverableIdsAsync(int userId,string permissionCode,CancellationToken ct=default){await using var c=await _database.OpenConnectionAsync(ct);var roles=await GetRoleIdsAsync(c,userId,ct);if(roles.Count==0)return [];var permittedRoles=new List<int>();foreach(var roleId in roles)if(await RoleHasPermissionAsync(c,roleId,permissionCode,ct))permittedRoles.Add(roleId);if(permittedRoles.Count==0)return [];var rows=new List<(int Id,int DepartmentId,int ProjectId,int TypeId)>();await using(var cmd=c.CreateCommand()){cmd.CommandText="SELECT Id,DepartmentId,ProjectId,DeliverableTypeId FROM Deliverables WHERE LifecycleStatus <> 'ARCHIVED'";await using var reader=await cmd.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))rows.Add((reader.GetInt32(0),reader.GetInt32(1),reader.GetInt32(2),reader.GetInt32(3)));}var ids=new List<int>();foreach(var row in rows){foreach(var roleId in permittedRoles){if(await MatchesDataScopeAsync(c,roleId,row.DepartmentId,row.ProjectId,row.TypeId,ct)){ids.Add(row.Id);break;}}}return ids;}
-    public static string BuildDataScopePredicate(string deliverableAlias="d")
+    public static string BuildDataScopePredicate(string deliverableAlias,string permissionCode)
     {
         var a=string.IsNullOrWhiteSpace(deliverableAlias)?"d":deliverableAlias;
         return $@"EXISTS (
             SELECT 1 FROM UserRoles ur JOIN Roles r ON r.Id=ur.RoleId AND r.IsEnabled=1
+            JOIN RolePermissions rp ON rp.RoleId=r.Id
+            JOIN Permissions p ON p.Id=rp.PermissionId AND p.IsEnabled=1 AND p.Code='{permissionCode.Replace("'","''")}'
             WHERE ur.UserId=$scopeUserId
-              AND EXISTS (SELECT 1 FROM RolePermissions rp JOIN Permissions p ON p.Id=rp.PermissionId WHERE rp.RoleId=r.Id AND p.IsEnabled=1)
-              AND EXISTS (
-                SELECT 1 FROM RoleDataScopes s
-                WHERE s.RoleId=r.Id AND (
-                    (s.Dimension='DEPARTMENT' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.DepartmentId AS TEXT))))
-                    OR (s.Dimension='PROJECT' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.ProjectId AS TEXT))))
-                    OR (s.Dimension='TYPE' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.DeliverableTypeId AS TEXT))))
+              AND (
+                (NOT EXISTS (SELECT 1 FROM RoleDataScopes s0 WHERE s0.RoleId=r.Id))
+                OR (
+                    (NOT EXISTS (SELECT 1 FROM RoleDataScopes s1 WHERE s1.RoleId=r.Id AND s1.Dimension='DEPARTMENT') OR EXISTS (SELECT 1 FROM RoleDataScopes s1 WHERE s1.RoleId=r.Id AND s1.Dimension='DEPARTMENT' AND (s1.ScopeType='ALL' OR (s1.ScopeType='INCLUDE' AND s1.ScopeValue=CAST({a}.DepartmentId AS TEXT)))))
+                    AND (NOT EXISTS (SELECT 1 FROM RoleDataScopes s2 WHERE s2.RoleId=r.Id AND s2.Dimension='PROJECT') OR EXISTS (SELECT 1 FROM RoleDataScopes s2 WHERE s2.RoleId=r.Id AND s2.Dimension='PROJECT' AND (s2.ScopeType='ALL' OR (s2.ScopeType='INCLUDE' AND s2.ScopeValue=CAST({a}.ProjectId AS TEXT)))))
+                    AND (NOT EXISTS (SELECT 1 FROM RoleDataScopes s3 WHERE s3.RoleId=r.Id AND s3.Dimension='TYPE') OR EXISTS (SELECT 1 FROM RoleDataScopes s3 WHERE s3.RoleId=r.Id AND s3.Dimension='TYPE' AND (s3.ScopeType='ALL' OR (s3.ScopeType='INCLUDE' AND s3.ScopeValue=CAST({a}.DeliverableTypeId AS TEXT)))))
                 )
-              )
-              AND (
-                NOT EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='DEPARTMENT') OR EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='DEPARTMENT' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.DepartmentId AS TEXT))))
-              )
-              AND (
-                NOT EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='PROJECT') OR EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='PROJECT' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.ProjectId AS TEXT))))
-              )
-              AND (
-                NOT EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='TYPE') OR EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='TYPE' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.DeliverableTypeId AS TEXT))))
               )
         )";
     }
