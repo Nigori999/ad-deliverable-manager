@@ -8,144 +8,30 @@ public sealed class ProductBaselineChangeService
 {
     private static readonly HashSet<string> DocumentRoles = new(StringComparer.OrdinalIgnoreCase) { "PRD", "FR", "TC", "TR" };
     private readonly DatabaseService _database;
-
     public ProductBaselineChangeService(DatabaseService database) => _database = database;
-
     public async Task ApplyAsync(int id, ProductBaselineChangeRequest request, string operatorName, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(request.ChangeReason)) throw new ArgumentException("请填写变更原因。");
         if (request.Hardware is null || request.Hardware.Count == 0) throw new ArgumentException("已发布基线变更至少需要保留一项硬件软件包配置。");
-        ValidateHardwareCategories(request.Hardware);
-        ValidateDocumentRoles(request.Deliverables);
-
-        await using var c = await _database.OpenConnectionAsync(ct);
-        await using var tx = c.BeginTransaction();
+        ValidateHardwareCategories(request.Hardware); ValidateDocumentRoles(request.Deliverables);
+        await using var c = await _database.OpenConnectionAsync(ct); using var tx = c.BeginTransaction();
         var current = await ReadSnapshotAsync(c, tx, id, ct) ?? throw new KeyNotFoundException("产品基线不存在。");
         if (!string.Equals(current.Status, "RELEASED", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("只有已发布产品基线可以发起变更。");
-
         var before = new { current.Description, current.VehicleModels, current.Odd, current.Capabilities, current.Hardware, current.Deliverables };
-        await ValidateHardwareAsync(c, tx, request.Hardware, ct);
-        await ValidateDeliverablesAsync(c, tx, request.Deliverables, ct);
-        var after = new
-        {
-            Description = request.Description?.Trim() ?? "",
-            VehicleModels = request.VehicleModels?.Trim() ?? "",
-            Odd = request.Odd?.Trim() ?? "",
-            Capabilities = request.Capabilities?.Trim() ?? "",
-            Hardware = request.Hardware.Select(x => new { x.HardwareCategory, x.HardwareModel, x.SoftwareVersionId }),
-            Deliverables = request.Deliverables.Select(x => new { RoleCode = x.RoleCode.Trim().ToUpperInvariant(), x.VersionId })
-        };
+        await ValidateHardwareAsync(c, tx, request.Hardware, ct); await ValidateDeliverablesAsync(c, tx, request.Deliverables, ct);
+        var after = new { Description = request.Description?.Trim() ?? "", VehicleModels = request.VehicleModels?.Trim() ?? "", Odd = request.Odd?.Trim() ?? "", Capabilities = request.Capabilities?.Trim() ?? "", Hardware = request.Hardware.Select(x => new { x.HardwareCategory, x.HardwareModel, x.SoftwareVersionId }), Deliverables = request.Deliverables.Select(x => new { RoleCode = x.RoleCode.Trim().ToUpperInvariant(), x.VersionId }) };
         var now = DateTime.UtcNow.ToString("O");
-
-        await using (var update = c.CreateCommand())
-        {
-            update.Transaction = tx;
-            update.CommandText = "UPDATE ProductBaselines SET Description=$description,VehicleModels=$vehicles,Odd=$odd,Capabilities=$capabilities,UpdatedAt=$now,Revision=Revision+1 WHERE Id=$id AND Revision=$revision AND VersionStatus='RELEASED'";
-            update.Parameters.AddWithValue("$description", request.Description?.Trim() ?? "");
-            update.Parameters.AddWithValue("$vehicles", request.VehicleModels?.Trim() ?? "");
-            update.Parameters.AddWithValue("$odd", request.Odd?.Trim() ?? "");
-            update.Parameters.AddWithValue("$capabilities", request.Capabilities?.Trim() ?? "");
-            update.Parameters.AddWithValue("$now", now); update.Parameters.AddWithValue("$id", id); update.Parameters.AddWithValue("$revision", request.Revision);
-            if (await update.ExecuteNonQueryAsync(ct) == 0) throw new InvalidOperationException("基线已被其他人修改，请刷新后重试。");
-        }
-
-        await using (var clear = c.CreateCommand())
-        {
-            clear.Transaction = tx;
-            clear.CommandText = "DELETE FROM ProductBaselineHardware WHERE BaselineId=$id; DELETE FROM ProductBaselineDeliverables WHERE BaselineId=$id;";
-            clear.Parameters.AddWithValue("$id", id);
-            await clear.ExecuteNonQueryAsync(ct);
-        }
-        foreach (var item in request.Hardware)
-        {
-            await using var insert = c.CreateCommand(); insert.Transaction = tx;
-            insert.CommandText = "INSERT INTO ProductBaselineHardware(BaselineId,HardwareCategory,HardwareModel,SoftwareVersionId) VALUES($id,$category,$model,$version)";
-            insert.Parameters.AddWithValue("$id", id); insert.Parameters.AddWithValue("$category", item.HardwareCategory.Trim()); insert.Parameters.AddWithValue("$model", item.HardwareModel?.Trim() ?? ""); insert.Parameters.AddWithValue("$version", item.SoftwareVersionId);
-            await insert.ExecuteNonQueryAsync(ct);
-        }
-        foreach (var item in request.Deliverables.DistinctBy(x => x.RoleCode.Trim().ToUpperInvariant()))
-        {
-            await using var insert = c.CreateCommand(); insert.Transaction = tx;
-            insert.CommandText = "INSERT INTO ProductBaselineDeliverables(BaselineId,RoleCode,VersionId) VALUES($id,$role,$version)";
-            insert.Parameters.AddWithValue("$id", id); insert.Parameters.AddWithValue("$role", item.RoleCode.Trim().ToUpperInvariant()); insert.Parameters.AddWithValue("$version", item.VersionId);
-            await insert.ExecuteNonQueryAsync(ct);
-        }
-
-        await using (var log = c.CreateCommand())
-        {
-            log.Transaction = tx;
-            log.CommandText = "INSERT INTO ProductBaselineChanges(BaselineId,ChangeReason,Description,BeforeJson,AfterJson,Operator,CreatedAt) VALUES($id,$reason,$description,$before,$after,$by,$now)";
-            log.Parameters.AddWithValue("$id", id); log.Parameters.AddWithValue("$reason", request.ChangeReason.Trim()); log.Parameters.AddWithValue("$description", request.Description?.Trim() ?? "");
-            log.Parameters.AddWithValue("$before", JsonSerializer.Serialize(before)); log.Parameters.AddWithValue("$after", JsonSerializer.Serialize(after)); log.Parameters.AddWithValue("$by", operatorName); log.Parameters.AddWithValue("$now", now);
-            await log.ExecuteNonQueryAsync(ct);
-        }
+        await using (var update = c.CreateCommand()) { update.Transaction = tx; update.CommandText = "UPDATE ProductBaselines SET Description=$description,VehicleModels=$vehicles,Odd=$odd,Capabilities=$capabilities,UpdatedAt=$now,Revision=Revision+1 WHERE Id=$id AND Revision=$revision AND VersionStatus='RELEASED'"; update.Parameters.AddWithValue("$description", request.Description?.Trim() ?? ""); update.Parameters.AddWithValue("$vehicles", request.VehicleModels?.Trim() ?? ""); update.Parameters.AddWithValue("$odd", request.Odd?.Trim() ?? ""); update.Parameters.AddWithValue("$capabilities", request.Capabilities?.Trim() ?? ""); update.Parameters.AddWithValue("$now", now); update.Parameters.AddWithValue("$id", id); update.Parameters.AddWithValue("$revision", request.Revision); if (await update.ExecuteNonQueryAsync(ct) == 0) throw new InvalidOperationException("基线已被其他人修改，请刷新后重试。"); }
+        await using (var clear = c.CreateCommand()) { clear.Transaction = tx; clear.CommandText = "DELETE FROM ProductBaselineHardware WHERE BaselineId=$id; DELETE FROM ProductBaselineDeliverables WHERE BaselineId=$id;"; clear.Parameters.AddWithValue("$id", id); await clear.ExecuteNonQueryAsync(ct); }
+        foreach (var item in request.Hardware) { await using var insert = c.CreateCommand(); insert.Transaction = tx; insert.CommandText = "INSERT INTO ProductBaselineHardware(BaselineId,HardwareCategory,HardwareModel,SoftwareVersionId) VALUES($id,$category,$model,$version)"; insert.Parameters.AddWithValue("$id", id); insert.Parameters.AddWithValue("$category", item.HardwareCategory.Trim()); insert.Parameters.AddWithValue("$model", item.HardwareModel?.Trim() ?? ""); insert.Parameters.AddWithValue("$version", item.SoftwareVersionId); await insert.ExecuteNonQueryAsync(ct); }
+        foreach (var item in request.Deliverables.DistinctBy(x => x.RoleCode.Trim().ToUpperInvariant())) { await using var insert = c.CreateCommand(); insert.Transaction = tx; insert.CommandText = "INSERT INTO ProductBaselineDeliverables(BaselineId,RoleCode,VersionId) VALUES($id,$role,$version)"; insert.Parameters.AddWithValue("$id", id); insert.Parameters.AddWithValue("$role", item.RoleCode.Trim().ToUpperInvariant()); insert.Parameters.AddWithValue("$version", item.VersionId); await insert.ExecuteNonQueryAsync(ct); }
+        await using (var log = c.CreateCommand()) { log.Transaction = tx; log.CommandText = "INSERT INTO ProductBaselineChanges(BaselineId,ChangeReason,Description,BeforeJson,AfterJson,Operator,CreatedAt) VALUES($id,$reason,$description,$before,$after,$by,$now)"; log.Parameters.AddWithValue("$id", id); log.Parameters.AddWithValue("$reason", request.ChangeReason.Trim()); log.Parameters.AddWithValue("$description", request.Description?.Trim() ?? ""); log.Parameters.AddWithValue("$before", JsonSerializer.Serialize(before)); log.Parameters.AddWithValue("$after", JsonSerializer.Serialize(after)); log.Parameters.AddWithValue("$by", operatorName); log.Parameters.AddWithValue("$now", now); await log.ExecuteNonQueryAsync(ct); }
         await tx.CommitAsync(ct);
     }
-
-    private static void ValidateHardwareCategories(List<ProductBaselineHardwareRequest> hardware)
-    {
-        if (hardware.GroupBy(x => x.HardwareCategory.Trim(), StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1)) throw new ArgumentException("同一硬件类别只能配置一个软件包版本。");
-        foreach (var item in hardware) if (!HardwareCategoryCatalog.Contains(item.HardwareCategory)) throw new ArgumentException($"硬件类别“{item.HardwareCategory}”不在系统硬件类别字典中。");
-    }
-
-    private static void ValidateDocumentRoles(List<ProductBaselineDeliverableRequest> deliverables)
-    {
-        if (deliverables.GroupBy(x => x.RoleCode.Trim(), StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1)) throw new ArgumentException("同一交付物类型只能关联一个版本。");
-        foreach (var item in deliverables) if (!DocumentRoles.Contains(item.RoleCode)) throw new ArgumentException($"不支持的基线交付物类型：{item.RoleCode}。");
-    }
-
-    private static async Task ValidateHardwareAsync(SqliteConnection c, SqliteTransaction tx, List<ProductBaselineHardwareRequest> hardware, CancellationToken ct)
-    {
-        foreach (var item in hardware)
-        {
-            await using var cmd = c.CreateCommand(); cmd.Transaction = tx;
-            cmd.CommandText = "SELECT t.TypeCode,v.VersionStatus,h.HardwareCategory FROM DeliverableVersions v JOIN Deliverables d ON d.Id=v.DeliverableId JOIN DeliverableTypes t ON t.Id=d.DeliverableTypeId LEFT JOIN HardwarePackageDetails h ON h.VersionId=v.Id WHERE v.Id=$version";
-            cmd.Parameters.AddWithValue("$version", item.SoftwareVersionId);
-            await using var r = await cmd.ExecuteReaderAsync(ct);
-            if (!await r.ReadAsync(ct)) throw new ArgumentException($"软件包版本#{item.SoftwareVersionId}不存在。");
-            var type = r.GetString(0); var status = r.GetString(1); var category = r.IsDBNull(2) ? "" : r.GetString(2);
-            if (!string.Equals(type, "SWP", StringComparison.OrdinalIgnoreCase)) throw new ArgumentException($"版本#{item.SoftwareVersionId}不是硬件软件包（SWP）。");
-            if (!new[] { "RELEASED", "SUPERSEDED" }.Contains(status, StringComparer.OrdinalIgnoreCase)) throw new ArgumentException($"软件包版本#{item.SoftwareVersionId}必须是已发布或已替代状态。");
-            if (!string.Equals(category, item.HardwareCategory.Trim(), StringComparison.OrdinalIgnoreCase)) throw new ArgumentException($"硬件类别“{item.HardwareCategory}”与软件包版本#{item.SoftwareVersionId}的实际类别不一致。");
-        }
-    }
-
-    private static async Task ValidateDeliverablesAsync(SqliteConnection c, SqliteTransaction tx, List<ProductBaselineDeliverableRequest> deliverables, CancellationToken ct)
-    {
-        foreach (var item in deliverables)
-        {
-            var role = item.RoleCode.Trim().ToUpperInvariant();
-            await using var cmd = c.CreateCommand(); cmd.Transaction = tx;
-            cmd.CommandText = "SELECT t.TypeCode,v.VersionStatus FROM DeliverableVersions v JOIN Deliverables d ON d.Id=v.DeliverableId JOIN DeliverableTypes t ON t.Id=d.DeliverableTypeId WHERE v.Id=$version";
-            cmd.Parameters.AddWithValue("$version", item.VersionId);
-            await using var r = await cmd.ExecuteReaderAsync(ct);
-            if (!await r.ReadAsync(ct)) throw new ArgumentException($"交付物版本#{item.VersionId}不存在。");
-            var type = r.GetString(0); var status = r.GetString(1);
-            if (!string.Equals(type, role, StringComparison.OrdinalIgnoreCase)) throw new ArgumentException($"交付物版本#{item.VersionId}类型与“{role}”不一致。");
-            if (!new[] { "RELEASED", "SUPERSEDED" }.Contains(status, StringComparer.OrdinalIgnoreCase)) throw new ArgumentException($"交付物版本#{item.VersionId}必须是已发布或已替代状态。");
-        }
-    }
-
-    private sealed record Snapshot(string Status, string Description, string VehicleModels, string Odd, string Capabilities, List<object> Hardware, List<object> Deliverables);
-
-    private static async Task<Snapshot?> ReadSnapshotAsync(SqliteConnection c, SqliteTransaction tx, int id, CancellationToken ct)
-    {
-        await using var cmd = c.CreateCommand(); cmd.Transaction = tx;
-        cmd.CommandText = "SELECT VersionStatus,Description,VehicleModels,Odd,Capabilities FROM ProductBaselines WHERE Id=$id AND Revision=$revision";
-        cmd.Parameters.AddWithValue("$id", id); cmd.Parameters.AddWithValue("$revision", 0);
-        // Revision is checked by the update statement; this initial lookup intentionally reads the current row.
-        cmd.CommandText = "SELECT VersionStatus,Description,VehicleModels,Odd,Capabilities,Revision FROM ProductBaselines WHERE Id=$id";
-        cmd.Parameters.Clear(); cmd.Parameters.AddWithValue("$id", id);
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        if (!await r.ReadAsync(ct)) return null;
-        var status = r.GetString(0); var description = r.IsDBNull(1) ? "" : r.GetString(1); var vehicles = r.IsDBNull(2) ? "" : r.GetString(2); var odd = r.IsDBNull(3) ? "" : r.GetString(3); var capabilities = r.IsDBNull(4) ? "" : r.GetString(4);
-        var hardware = new List<object>(); var deliverables = new List<object>();
-        await r.CloseAsync();
-        await using var h = c.CreateCommand(); h.Transaction = tx; h.CommandText = "SELECT HardwareCategory,HardwareModel,SoftwareVersionId FROM ProductBaselineHardware WHERE BaselineId=$id ORDER BY HardwareCategory"; h.Parameters.AddWithValue("$id", id);
-        await using var hr = await h.ExecuteReaderAsync(ct); while (await hr.ReadAsync(ct)) hardware.Add(new { hardwareCategory = hr.GetString(0), hardwareModel = hr.IsDBNull(1) ? "" : hr.GetString(1), softwareVersionId = hr.GetInt32(2) });
-        await hr.CloseAsync();
-        await using var d = c.CreateCommand(); d.Transaction = tx; d.CommandText = "SELECT RoleCode,VersionId FROM ProductBaselineDeliverables WHERE BaselineId=$id ORDER BY RoleCode"; d.Parameters.AddWithValue("$id", id);
-        await using var dr = await d.ExecuteReaderAsync(ct); while (await dr.ReadAsync(ct)) deliverables.Add(new { roleCode = dr.GetString(0), versionId = dr.GetInt32(1) });
-        return new Snapshot(status, description, vehicles, odd, capabilities, hardware, deliverables);
-    }
+    private static void ValidateHardwareCategories(List<ProductBaselineHardwareRequest> hardware){if(hardware.GroupBy(x => x.HardwareCategory.Trim(), StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1)) throw new ArgumentException("同一硬件类别只能配置一个软件包版本。");foreach(var item in hardware)if(!HardwareCategoryCatalog.Contains(item.HardwareCategory))throw new ArgumentException($"硬件类别“{item.HardwareCategory}”不在系统硬件类别字典中。");}
+    private static void ValidateDocumentRoles(List<ProductBaselineDeliverableRequest> deliverables){if(deliverables.GroupBy(x => x.RoleCode.Trim(), StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1))throw new ArgumentException("同一交付物类型只能关联一个版本。");foreach(var item in deliverables)if(!DocumentRoles.Contains(item.RoleCode))throw new ArgumentException($"不支持的基线交付物类型：{item.RoleCode}。");}
+    private static async Task ValidateHardwareAsync(SqliteConnection c,SqliteTransaction tx,List<ProductBaselineHardwareRequest> hardware,CancellationToken ct){foreach(var item in hardware){await using var cmd=c.CreateCommand();cmd.Transaction=tx;cmd.CommandText="SELECT t.TypeCode,v.VersionStatus,h.HardwareCategory FROM DeliverableVersions v JOIN Deliverables d ON d.Id=v.DeliverableId JOIN DeliverableTypes t ON t.Id=d.DeliverableTypeId LEFT JOIN HardwarePackageDetails h ON h.VersionId=v.Id WHERE v.Id=$version";cmd.Parameters.AddWithValue("$version",item.SoftwareVersionId);await using var r=await cmd.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))throw new ArgumentException($"软件包版本#{item.SoftwareVersionId}不存在。");var type=r.GetString(0);var status=r.GetString(1);var category=r.IsDBNull(2)?"":r.GetString(2);if(!string.Equals(type,"SWP",StringComparison.OrdinalIgnoreCase))throw new ArgumentException($"版本#{item.SoftwareVersionId}不是硬件软件包（SWP）。");if(!new[]{"RELEASED","SUPERSEDED"}.Contains(status,StringComparer.OrdinalIgnoreCase))throw new ArgumentException($"软件包版本#{item.SoftwareVersionId}必须是已发布或已替代状态。");if(!string.Equals(category,item.HardwareCategory.Trim(),StringComparison.OrdinalIgnoreCase))throw new ArgumentException($"硬件类别“{item.HardwareCategory}”与软件包版本#{item.SoftwareVersionId}的实际类别不一致。");}}
+    private static async Task ValidateDeliverablesAsync(SqliteConnection c,SqliteTransaction tx,List<ProductBaselineDeliverableRequest> deliverables,CancellationToken ct){foreach(var item in deliverables){var role=item.RoleCode.Trim().ToUpperInvariant();await using var cmd=c.CreateCommand();cmd.Transaction=tx;cmd.CommandText="SELECT t.TypeCode,v.VersionStatus FROM DeliverableVersions v JOIN Deliverables d ON d.Id=v.DeliverableId JOIN DeliverableTypes t ON t.Id=d.DeliverableTypeId WHERE v.Id=$version";cmd.Parameters.AddWithValue("$version",item.VersionId);await using var r=await cmd.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))throw new ArgumentException($"交付物版本#{item.VersionId}不存在。");var type=r.GetString(0);var status=r.GetString(1);if(!string.Equals(type,role,StringComparison.OrdinalIgnoreCase))throw new ArgumentException($"交付物版本#{item.VersionId}类型与“{role}”不一致。");if(!new[]{"RELEASED","SUPERSEDED"}.Contains(status,StringComparer.OrdinalIgnoreCase))throw new ArgumentException($"交付物版本#{item.VersionId}必须是已发布或已替代状态。");}}
+    private sealed record Snapshot(string Status,string Description,string VehicleModels,string Odd,string Capabilities,List<object> Hardware,List<object> Deliverables);
+    private static async Task<Snapshot?> ReadSnapshotAsync(SqliteConnection c,SqliteTransaction tx,int id,CancellationToken ct){await using var cmd=c.CreateCommand();cmd.Transaction=tx;cmd.CommandText="SELECT VersionStatus,Description,VehicleModels,Odd,Capabilities FROM ProductBaselines WHERE Id=$id";cmd.Parameters.AddWithValue("$id",id);await using var r=await cmd.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))return null;var status=r.GetString(0);var description=r.IsDBNull(1)?"":r.GetString(1);var vehicles=r.IsDBNull(2)?"":r.GetString(2);var odd=r.IsDBNull(3)?"":r.GetString(3);var capabilities=r.IsDBNull(4)?"":r.GetString(4);var hardware=new List<object>();var deliverables=new List<object>();await r.CloseAsync();await using var h=c.CreateCommand();h.Transaction=tx;h.CommandText="SELECT HardwareCategory,HardwareModel,SoftwareVersionId FROM ProductBaselineHardware WHERE BaselineId=$id ORDER BY HardwareCategory";h.Parameters.AddWithValue("$id",id);await using var hr=await h.ExecuteReaderAsync(ct);while(await hr.ReadAsync(ct))hardware.Add(new{hardwareCategory=hr.GetString(0),hardwareModel=hr.IsDBNull(1)?"":hr.GetString(1),softwareVersionId=hr.GetInt32(2)});await hr.CloseAsync();await using var d=c.CreateCommand();d.Transaction=tx;d.CommandText="SELECT RoleCode,VersionId FROM ProductBaselineDeliverables WHERE BaselineId=$id ORDER BY RoleCode";d.Parameters.AddWithValue("$id",id);await using var dr=await d.ExecuteReaderAsync(ct);while(await dr.ReadAsync(ct))deliverables.Add(new{roleCode=dr.GetString(0),versionId=dr.GetInt32(1)});return new Snapshot(status,description,vehicles,odd,capabilities,hardware,deliverables);}
 }
