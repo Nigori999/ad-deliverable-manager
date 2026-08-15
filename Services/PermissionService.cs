@@ -12,6 +12,32 @@ public sealed class PermissionService
     public async Task<bool> HasPermissionAsync(int userId,string permissionCode,int? deliverableId=null,CancellationToken ct=default){await using var c=await _database.OpenConnectionAsync(ct);var roles=await GetRoleIdsAsync(c,userId,ct);foreach(var roleId in roles){if(!await RoleHasPermissionAsync(c,roleId,permissionCode,ct))continue;if(!deliverableId.HasValue||await MatchesDataScopeAsync(c,roleId,deliverableId.Value,ct))return true;}return false;}
     public async Task<bool> HasCreateScopeAsync(int userId,string permissionCode,int departmentId,int projectId,int typeId,CancellationToken ct=default){await using var c=await _database.OpenConnectionAsync(ct);var roles=await GetRoleIdsAsync(c,userId,ct);foreach(var roleId in roles){if(!await RoleHasPermissionAsync(c,roleId,permissionCode,ct))continue;if(await MatchesDataScopeAsync(c,roleId,departmentId,projectId,typeId,ct))return true;}return false;}
     public async Task<IReadOnlyList<int>> GetAllowedDeliverableIdsAsync(int userId,string permissionCode,CancellationToken ct=default){await using var c=await _database.OpenConnectionAsync(ct);var roles=await GetRoleIdsAsync(c,userId,ct);if(roles.Count==0)return [];var permittedRoles=new List<int>();foreach(var roleId in roles)if(await RoleHasPermissionAsync(c,roleId,permissionCode,ct))permittedRoles.Add(roleId);if(permittedRoles.Count==0)return [];var rows=new List<(int Id,int DepartmentId,int ProjectId,int TypeId)>();await using(var cmd=c.CreateCommand()){cmd.CommandText="SELECT Id,DepartmentId,ProjectId,DeliverableTypeId FROM Deliverables WHERE LifecycleStatus <> 'ARCHIVED'";await using var reader=await cmd.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))rows.Add((reader.GetInt32(0),reader.GetInt32(1),reader.GetInt32(2),reader.GetInt32(3)));}var ids=new List<int>();foreach(var row in rows){foreach(var roleId in permittedRoles){if(await MatchesDataScopeAsync(c,roleId,row.DepartmentId,row.ProjectId,row.TypeId,ct)){ids.Add(row.Id);break;}}}return ids;}
+    public static string BuildDataScopePredicate(string deliverableAlias="d")
+    {
+        var a=string.IsNullOrWhiteSpace(deliverableAlias)?"d":deliverableAlias;
+        return $@"EXISTS (
+            SELECT 1 FROM UserRoles ur JOIN Roles r ON r.Id=ur.RoleId AND r.IsEnabled=1
+            WHERE ur.UserId=$scopeUserId
+              AND EXISTS (SELECT 1 FROM RolePermissions rp JOIN Permissions p ON p.Id=rp.PermissionId WHERE rp.RoleId=r.Id AND p.IsEnabled=1)
+              AND EXISTS (
+                SELECT 1 FROM RoleDataScopes s
+                WHERE s.RoleId=r.Id AND (
+                    (s.Dimension='DEPARTMENT' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.DepartmentId AS TEXT))))
+                    OR (s.Dimension='PROJECT' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.ProjectId AS TEXT))))
+                    OR (s.Dimension='TYPE' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.DeliverableTypeId AS TEXT))))
+                )
+              )
+              AND (
+                NOT EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='DEPARTMENT') OR EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='DEPARTMENT' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.DepartmentId AS TEXT))))
+              )
+              AND (
+                NOT EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='PROJECT') OR EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='PROJECT' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.ProjectId AS TEXT))))
+              )
+              AND (
+                NOT EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='TYPE') OR EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='TYPE' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({a}.DeliverableTypeId AS TEXT))))
+              )
+        )";
+    }
     private static async Task<bool> RoleHasPermissionAsync(SqliteConnection c,int roleId,string permissionCode,CancellationToken ct){await using var cmd=c.CreateCommand();cmd.CommandText="SELECT COUNT(*) FROM RolePermissions rp JOIN Permissions p ON p.Id=rp.PermissionId WHERE rp.RoleId=$role AND p.Code=$code AND p.IsEnabled=1";cmd.Parameters.AddWithValue("$role",roleId);cmd.Parameters.AddWithValue("$code",permissionCode);return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct))>0;}
     private static async Task<List<int>> GetRoleIdsAsync(SqliteConnection c,int userId,CancellationToken ct){await using var cmd=c.CreateCommand();cmd.CommandText="SELECT r.Id FROM UserRoles ur JOIN Roles r ON r.Id=ur.RoleId WHERE ur.UserId=$id AND r.IsEnabled=1";cmd.Parameters.AddWithValue("$id",userId);var ids=new List<int>();await using var reader=await cmd.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))ids.Add(reader.GetInt32(0));return ids;}
     private static async Task<bool> MatchesDataScopeAsync(SqliteConnection c,int roleId,int deliverableId,CancellationToken ct){await using var cmd=c.CreateCommand();cmd.CommandText="SELECT DepartmentId,ProjectId,DeliverableTypeId FROM Deliverables WHERE Id=$id";cmd.Parameters.AddWithValue("$id",deliverableId);int departmentId,projectId,typeId;await using(var reader=await cmd.ExecuteReaderAsync(ct)){if(!await reader.ReadAsync(ct))return false;departmentId=reader.GetInt32(0);projectId=reader.GetInt32(1);typeId=reader.GetInt32(2);}return await MatchesDataScopeAsync(c,roleId,departmentId,projectId,typeId,ct);}
