@@ -85,7 +85,7 @@ public sealed class ProductBaselinesController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] ProductBaselineUpdateRequest request, CancellationToken ct)
     {
-        foreach (var item in request.Deliverables) item.RoleCode = NormalizeDocumentRole(item.RoleCode);
+        request = request with { Deliverables = NormalizeDocumentRoles(request.Deliverables) };
         try { await _repository.UpdateDraftAsync(id, request, User.GetDisplayName(), ct); return Ok(new { message = "产品基线草稿已保存。" }); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
         catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
@@ -111,14 +111,20 @@ public sealed class ProductBaselinesController : ControllerBase
     [HttpPost("{id:int}/changes")]
     public async Task<IActionResult> Change(int id, [FromBody] ProductBaselineChangeRequest request, CancellationToken ct)
     {
-        foreach (var item in request.Deliverables) item.RoleCode = NormalizeDocumentRole(item.RoleCode);
+        request = request with { Deliverables = NormalizeDocumentRoles(request.Deliverables) };
         try { await _changeService.ApplyAsync(id, request, User.GetDisplayName(), ct); return Ok(new { message = "产品基线变更已生效。" }); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
         catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
         catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
     }
 
-    private static string NormalizeDocumentRole(string? role) => string.Equals(role?.Trim(), "TEST_REPORT", StringComparison.OrdinalIgnoreCase) ? "TR" : (role ?? "").Trim().ToUpperInvariant();
+    private static List<ProductBaselineDeliverableRequest> NormalizeDocumentRoles(IEnumerable<ProductBaselineDeliverableRequest>? items) =>
+        (items ?? []).Select(item => item with { RoleCode = NormalizeDocumentRole(item.RoleCode) }).ToList();
+
+    private static string NormalizeDocumentRole(string? role) =>
+        string.Equals(role?.Trim(), "TEST_REPORT", StringComparison.OrdinalIgnoreCase)
+            ? "TR"
+            : (role ?? "").Trim().ToUpperInvariant();
 }
 
 public sealed record RevisionRequest(int Revision);
