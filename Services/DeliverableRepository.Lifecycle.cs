@@ -13,6 +13,7 @@ public sealed partial class DeliverableRepository
         using var transaction = connection.BeginTransaction();
 
         var codes = await ReadCodesAsync(connection, transaction, request.DepartmentId, request.DeliverableTypeId, request.ProjectId, cancellationToken);
+        await ValidateCategoryAsync(connection, transaction, request.CategoryId, request.DeliverableTypeId, cancellationToken);
         var objectCode = NormalizeCode(request.ObjectCode);
         var prefix = $"AD-{codes.DepartmentCode}-{codes.TypeCode}-{codes.ProjectCode}-{objectCode}";
 
@@ -27,10 +28,10 @@ public sealed partial class DeliverableRepository
         await using var insert = connection.CreateCommand();
         insert.Transaction = transaction;
         insert.CommandText = """
-            INSERT INTO Deliverables(DeliverableCode, UnifiedName, DepartmentId, DeliverableTypeId, ProjectId,
+            INSERT INTO Deliverables(DeliverableCode, UnifiedName, DepartmentId, DeliverableTypeId, CategoryId, ProjectId,
                 ObjectCode, BusinessModule, ResponsiblePerson, DefaultConfidentiality, DefaultSharePolicy,
                 Description, LifecycleStatus, CreatedBy, CreatedAt, UpdatedAt, Revision)
-            VALUES($code,$name,$departmentId,$typeId,$projectId,$objectCode,$module,$owner,$confidentiality,
+            VALUES($code,$name,$departmentId,$typeId,$categoryId,$projectId,$objectCode,$module,$owner,$confidentiality,
                 $sharePolicy,$description,'ACTIVE',$operator,$now,$now,1);
             SELECT last_insert_rowid();
             """;
@@ -38,6 +39,7 @@ public sealed partial class DeliverableRepository
         insert.Parameters.AddValue("$name", request.UnifiedName.Trim());
         insert.Parameters.AddValue("$departmentId", request.DepartmentId);
         insert.Parameters.AddValue("$typeId", request.DeliverableTypeId);
+        insert.Parameters.AddValue("$categoryId", request.CategoryId);
         insert.Parameters.AddValue("$projectId", request.ProjectId);
         insert.Parameters.AddValue("$objectCode", objectCode);
         insert.Parameters.AddValue("$module", request.BusinessModule);
@@ -60,19 +62,31 @@ public sealed partial class DeliverableRepository
 
     public async Task<bool> UpdateAsync(int id, DeliverableUpdateRequest request, CancellationToken cancellationToken)
     {
+        if (request.CategoryId <= 0) throw new ArgumentException("请选择交付物类别。");
         if (string.IsNullOrWhiteSpace(request.UnifiedName) || string.IsNullOrWhiteSpace(request.ResponsiblePerson))
             throw new ArgumentException("统一名称和责任人不能为空。");
 
         await using var connection = await _database.OpenConnectionAsync(cancellationToken);
         using var transaction = connection.BeginTransaction();
+        await using (var typeCommand = connection.CreateCommand())
+        {
+            typeCommand.Transaction = transaction;
+            typeCommand.CommandText = "SELECT DeliverableTypeId FROM Deliverables WHERE Id=$id";
+            typeCommand.Parameters.AddValue("$id", id);
+            var typeValue = await typeCommand.ExecuteScalarAsync(cancellationToken);
+            if (typeValue is null) throw new KeyNotFoundException("交付物不存在。");
+            await ValidateCategoryAsync(connection, transaction, request.CategoryId, Convert.ToInt32(typeValue), cancellationToken);
+        }
+
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            UPDATE Deliverables SET UnifiedName=$name, BusinessModule=$module, ResponsiblePerson=$owner,
+            UPDATE Deliverables SET CategoryId=$categoryId, UnifiedName=$name, BusinessModule=$module, ResponsiblePerson=$owner,
                 DefaultConfidentiality=$confidentiality, DefaultSharePolicy=$sharePolicy, Description=$description,
                 UpdatedAt=$now, Revision=Revision+1
             WHERE Id=$id AND Revision=$revision;
             """;
+        command.Parameters.AddValue("$categoryId", request.CategoryId);
         command.Parameters.AddValue("$name", request.UnifiedName.Trim());
         command.Parameters.AddValue("$module", request.BusinessModule);
         command.Parameters.AddValue("$owner", request.ResponsiblePerson.Trim());
@@ -237,5 +251,17 @@ public sealed partial class DeliverableRepository
             $"版本 {internalVersion}: {fromStatus} → {toStatus}", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return toStatus;
+    }
+
+    private static async Task ValidateCategoryAsync(SqliteConnection connection, SqliteTransaction transaction, int categoryId, int typeId, CancellationToken cancellationToken)
+    {
+        if (categoryId <= 0) throw new ArgumentException("请选择交付物类别。");
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT COUNT(*) FROM DeliverableCategories WHERE Id=$categoryId AND DeliverableTypeId=$typeId AND IsEnabled=1";
+        command.Parameters.AddValue("$categoryId", categoryId);
+        command.Parameters.AddValue("$typeId", typeId);
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 0)
+            throw new ArgumentException("所选交付物类别与交付物类型不匹配或已停用，请重新选择。" );
     }
 }
