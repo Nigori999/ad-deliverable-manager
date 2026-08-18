@@ -10,7 +10,7 @@ openDeliverableForm = function () {
 
   const field = objectInput.closest('.field');
   if (field) {
-    field.innerHTML = `<label>对象编码</label><div class="derived-code-box"><strong id="derived-object-code">—</strong><small>自动取自“交付物类别编码”，用于生成交付物编码，无需手工填写。</small></div><input type="hidden" name="objectCode" value="">`;
+    field.innerHTML = `<label>类别编码</label><div class="derived-code-box"><strong id="derived-object-code">—</strong><small>自动取自所选“交付物类别”的编码，并参与交付物编码生成，无需手工填写。</small></div><input type="hidden" name="objectCode" value="">`;
   }
 
   const sync = () => {
@@ -23,4 +23,13 @@ openDeliverableForm = function () {
 
   categorySelect.addEventListener('change', sync);
   sync();
+};
+
+const renderDeliverableDetailWithObjectCodeLabel = renderDeliverableDetail;
+renderDeliverableDetail = async function (id) {
+  await renderDeliverableDetailWithObjectCodeLabel(id);
+  document.querySelectorAll('.info-item').forEach(item => {
+    const label = item.querySelector('span');
+    if (label?.textContent === '对象编码') label.textContent = '类别编码';
+  });
 };
