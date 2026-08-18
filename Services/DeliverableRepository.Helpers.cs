@@ -13,17 +13,20 @@ public sealed partial class DeliverableRepository
             INSERT INTO HardwarePackageDetails(VersionId,HardwareCategory,HardwareModel,SupplierName,SupplierPartNumber,
                 InternalPartNumber,SoftwarePackageType,CompatibleHardwareVersion,CompatiblePlatform,FlashMethod,FlashTool,
                 DependencyDescription,ReleaseNotePath,FlashGuidePath,Remark)
-            VALUES($id,$category,$model,$supplier,$supplierPart,$internalPart,$packageType,$hardwareVersion,$platform,
-                $flashMethod,$flashTool,$dependency,$releaseNote,$flashGuide,$remark);
+            SELECT $id,cat.CategoryCode,$model,$supplier,$supplierPart,$internalPart,$packageType,$hardwareVersion,$platform,
+                $flashMethod,$flashTool,$dependency,$releaseNote,$flashGuide,$remark
+            FROM DeliverableVersions v JOIN Deliverables d ON d.Id=v.DeliverableId JOIN DeliverableCategories cat ON cat.Id=d.CategoryId
+            WHERE v.Id=$id;
             """;
-        c.Parameters.AddValue("$id", versionId); c.Parameters.AddValue("$category", x.HardwareCategory);
+        c.Parameters.AddValue("$id", versionId);
         c.Parameters.AddValue("$model", x.HardwareModel); c.Parameters.AddValue("$supplier", x.SupplierName);
         c.Parameters.AddValue("$supplierPart", x.SupplierPartNumber); c.Parameters.AddValue("$internalPart", x.InternalPartNumber);
         c.Parameters.AddValue("$packageType", x.SoftwarePackageType); c.Parameters.AddValue("$hardwareVersion", x.CompatibleHardwareVersion);
         c.Parameters.AddValue("$platform", x.CompatiblePlatform); c.Parameters.AddValue("$flashMethod", x.FlashMethod);
         c.Parameters.AddValue("$flashTool", x.FlashTool); c.Parameters.AddValue("$dependency", x.DependencyDescription);
         c.Parameters.AddValue("$releaseNote", x.ReleaseNotePath); c.Parameters.AddValue("$flashGuide", x.FlashGuidePath);
-        c.Parameters.AddValue("$remark", x.Remark); await c.ExecuteNonQueryAsync(ct);
+        c.Parameters.AddValue("$remark", x.Remark);
+        if (await c.ExecuteNonQueryAsync(ct) == 0) throw new InvalidOperationException("无法解析该交付物的类别，请检查基础数据配置。");
     }
 
     private static async Task InsertPrdAsync(SqliteConnection connection, SqliteTransaction transaction, int versionId, PrdDetailRequest x, CancellationToken ct)

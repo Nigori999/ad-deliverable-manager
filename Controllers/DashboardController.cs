@@ -14,7 +14,7 @@ public sealed class DashboardController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken cancellationToken)
     {
-        await using var connection=await _database.OpenConnectionAsync(cancellationToken);var scope=PermissionService.BuildDataScopePredicate("d");
+        await using var connection=await _database.OpenConnectionAsync(cancellationToken);var scope=PermissionService.BuildDataScopePredicate("d",PermissionCatalog.DashboardView);
         async Task<long> ScalarAsync(string sql){await using var command=connection.CreateCommand();command.CommandText=sql;command.Parameters.AddWithValue("$scopeUserId",User.GetUserId());return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)??0);}
         async Task<List<object>> GroupAsync(string sql){var result=new List<object>();await using var command=connection.CreateCommand();command.CommandText=sql;command.Parameters.AddWithValue("$scopeUserId",User.GetUserId());await using var reader=await command.ExecuteReaderAsync(cancellationToken);while(await reader.ReadAsync(cancellationToken))result.Add(new{name=reader.GetString(0),value=reader.GetInt64(1)});return result;}
 
@@ -25,8 +25,8 @@ public sealed class DashboardController : ControllerBase
         var monthlyChanges=await ScalarAsync($"SELECT COUNT(*) FROM ChangeRecords c JOIN Deliverables d ON d.Id=c.DeliverableId WHERE substr(c.CreatedAt,1,7)=substr(datetime('now'),1,7) AND {scope}");
         var deprecatedVersions=await ScalarAsync($"SELECT COUNT(*) FROM DeliverableVersions v JOIN Deliverables d ON d.Id=v.DeliverableId WHERE v.VersionStatus='DEPRECATED' AND {scope}");
 
-        var departmentDistribution=await GroupAsync($"SELECT d.DepartmentName,COUNT(x.Id) FROM Departments d LEFT JOIN Deliverables x ON x.DepartmentId=d.Id AND x.LifecycleStatus='ACTIVE' AND {PermissionService.BuildDataScopePredicate("x")} WHERE d.IsEnabled=1 GROUP BY d.Id,d.DepartmentName ORDER BY d.SortOrder;");
-        var typeDistribution=await GroupAsync($"SELECT t.TypeName,COUNT(x.Id) FROM DeliverableTypes t LEFT JOIN Deliverables x ON x.DeliverableTypeId=t.Id AND x.LifecycleStatus='ACTIVE' AND {PermissionService.BuildDataScopePredicate("x")} WHERE t.IsEnabled=1 GROUP BY t.Id,t.TypeName ORDER BY t.SortOrder;");
+        var departmentDistribution=await GroupAsync($"SELECT d.DepartmentName,COUNT(x.Id) FROM Departments d LEFT JOIN Deliverables x ON x.DepartmentId=d.Id AND x.LifecycleStatus='ACTIVE' AND {PermissionService.BuildDataScopePredicate("x",PermissionCatalog.DashboardView)} WHERE d.IsEnabled=1 GROUP BY d.Id,d.DepartmentName ORDER BY d.SortOrder;");
+        var typeDistribution=await GroupAsync($"SELECT t.TypeName,COUNT(x.Id) FROM DeliverableTypes t LEFT JOIN Deliverables x ON x.DeliverableTypeId=t.Id AND x.LifecycleStatus='ACTIVE' AND {PermissionService.BuildDataScopePredicate("x",PermissionCatalog.DashboardView)} WHERE t.IsEnabled=1 GROUP BY t.Id,t.TypeName ORDER BY t.SortOrder;");
         var statusDistribution=await GroupAsync($"SELECT CASE v.VersionStatus WHEN 'DRAFT' THEN '草稿' WHEN 'IN_REVIEW' THEN '评审中' WHEN 'RELEASED' THEN '已发布' WHEN 'SUPERSEDED' THEN '已替代' WHEN 'DEPRECATED' THEN '已废止' ELSE v.VersionStatus END,COUNT(*) FROM DeliverableVersions v JOIN Deliverables d ON d.Id=v.DeliverableId WHERE {scope} GROUP BY v.VersionStatus ORDER BY COUNT(*) DESC;");
 
         var monthlyTrend=new List<object>();await using(var command=connection.CreateCommand()){
