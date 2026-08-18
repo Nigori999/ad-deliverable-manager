@@ -88,8 +88,8 @@ public sealed partial class DeliverableRepository
 
     private static string NormalizeCode(string value)
     {
-        var normalized = new string(value.Trim().ToUpperInvariant().Where(c => char.IsLetterOrDigit(c)).ToArray());
-        if (string.IsNullOrEmpty(normalized)) throw new ArgumentException("对象编码只能包含字母或数字。" );
+        var normalized = new string(value.Trim().ToUpperInvariant().Where(c => char.IsLetterOrDigit(c) || c == '_').ToArray());
+        if (string.IsNullOrEmpty(normalized)) throw new ArgumentException("类别编码只能包含字母、数字或下划线。" );
         return normalized;
     }
 
