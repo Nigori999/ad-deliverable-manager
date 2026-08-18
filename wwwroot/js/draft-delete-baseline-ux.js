@@ -1,7 +1,7 @@
 Object.assign(permissionFriendly, {
-  DELIVERY_DELETE: '删除草稿交付物',
+  DELIVERY_DELETE: '删除交付物',
   VERSION_EDIT: '编辑草稿版本',
-  VERSION_DELETE: '删除草稿版本',
+  VERSION_DELETE: '删除草稿/已作废版本',
   CHANGE_DRAFT_EDIT: '编辑待评估变更',
   CHANGE_DELETE: '删除待评估变更',
   BASELINE_DELETE: '删除产品基线草稿',
@@ -27,42 +27,43 @@ renderDeliverableDetail = async function(id) {
     document.querySelectorAll('.version-detail-btn').forEach(detailButton => {
       const versionId = Number(detailButton.dataset.versionId);
       const version = versions.find(v => v.id === versionId);
-      if (!version || version.status !== 'DRAFT') return;
+      if (!version) return;
       const actions = detailButton.closest('.inline-actions');
       if (!actions) return;
-      if (hasPermission('VERSION_EDIT') && !actions.querySelector(`[data-version-edit="${versionId}"]`)) {
+      if (version.status === 'DRAFT' && hasPermission('VERSION_EDIT') && !actions.querySelector(`[data-version-edit="${versionId}"]`)) {
         const edit = document.createElement('button');
         edit.type = 'button'; edit.className = 'btn btn-light btn-sm'; edit.dataset.versionEdit = String(versionId); edit.dataset.permission = 'VERSION_EDIT'; edit.textContent = '编辑';
         edit.onclick = () => openDraftVersionEditor(id, versionId);
         actions.insertBefore(edit, detailButton.nextSibling);
       }
-      if (hasPermission('VERSION_DELETE') && versions.length > 1 && !actions.querySelector(`[data-version-delete="${versionId}"]`)) {
+      const canDeleteVersion = version.status === 'DEPRECATED' || (version.status === 'DRAFT' && versions.length > 1);
+      if (hasPermission('VERSION_DELETE') && canDeleteVersion && !actions.querySelector(`[data-version-delete="${versionId}"]`)) {
         const del = document.createElement('button');
         del.type = 'button'; del.className = 'btn btn-danger btn-sm'; del.dataset.versionDelete = String(versionId); del.dataset.permission = 'VERSION_DELETE'; del.textContent = '删除';
-        del.onclick = () => deleteDraftVersion(id, version);
+        del.onclick = () => deleteVersionRecord(id, version);
         actions.appendChild(del);
       }
     });
 
     if (hasPermission('DELIVERY_DELETE')) {
-      const canDelete = versions.length > 0 && versions.every(v => v.status === 'DRAFT');
+      const canDelete = versions.every(v => ['DRAFT', 'DEPRECATED'].includes(v.status));
       if (canDelete) {
         const actions = document.querySelector('.detail-title .inline-actions');
-        if (actions && !actions.querySelector('[data-delete-draft-deliverable]')) {
+        if (actions && !actions.querySelector('[data-delete-deliverable]')) {
           const button = document.createElement('button');
-          button.type = 'button'; button.className = 'btn btn-danger'; button.dataset.deleteDraftDeliverable = String(id); button.dataset.permission = 'DELIVERY_DELETE'; button.textContent = '删除草稿';
-          button.title = '仅删除尚未进入审批、发布、变更或关联流程的草稿交付物';
+          button.type = 'button'; button.className = 'btn btn-danger'; button.dataset.deleteDeliverable = String(id); button.dataset.permission = 'DELIVERY_DELETE'; button.textContent = '删除交付物';
+          button.title = '仅当不存在审批中、待发布、已发布或已替代版本，且没有业务引用时可以删除';
           button.onclick = async () => {
-            const result = await confirmAction('删除草稿交付物', `确认永久删除“${data.deliverable.name}”及其全部草稿版本吗？此操作不可恢复。`, { submitText: '确认删除', danger: true });
+            const result = await confirmAction('删除交付物', `确认永久删除“${data.deliverable.name}”吗？仅草稿和已作废版本会随交付物一起清理，此操作不可恢复。`, { submitText: '确认删除', danger: true });
             if (!result.confirmed) return;
-            try { await api(`/internal/draft-deletions/deliverables/${id}`, { method: 'DELETE' }); toast('草稿交付物已删除'); location.hash = '#/deliverables'; }
+            try { await api(`/internal/draft-deletions/deliverables/${id}`, { method: 'DELETE' }); toast('交付物已删除'); location.hash = '#/deliverables'; }
             catch (error) { toast(error.message, 'error'); }
           };
           actions.appendChild(button);
         }
       }
     }
-  } catch (error) { console.warn('草稿CRUD增强加载失败', error); }
+  } catch (error) { console.warn('CRUD增强加载失败', error); }
 };
 
 async function openDraftVersionEditor(deliverableId, versionId) {
@@ -82,10 +83,11 @@ async function openDraftVersionEditor(deliverableId, versionId) {
   Object.entries(map).forEach(([label,name]) => { const field=form.elements[name]; if(field && s[label] != null) field.value=s[label]; });
 }
 
-async function deleteDraftVersion(deliverableId, version) {
-  const result = await confirmAction('删除草稿版本', `确认永久删除草稿版本“${version.internalVersion}”吗？此操作不可恢复。`, { submitText: '确认删除', danger: true });
+async function deleteVersionRecord(deliverableId, version) {
+  const label = version.status === 'DEPRECATED' ? '已作废版本' : '草稿版本';
+  const result = await confirmAction(`删除${label}`, `确认永久删除${label}“${version.internalVersion}”吗？此操作不可恢复。`, { submitText: '确认删除', danger: true });
   if (!result.confirmed) return;
-  try { await api(`/internal/version-details/${version.id}`, { method: 'DELETE' }); toast('草稿版本已删除'); await renderDeliverableDetail(deliverableId); }
+  try { await api(`/internal/version-details/${version.id}`, { method: 'DELETE' }); toast(`${label}已删除`); await renderDeliverableDetail(deliverableId); }
   catch (error) { toast(error.message, 'error'); }
 }
 

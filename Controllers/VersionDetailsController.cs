@@ -27,7 +27,7 @@ public sealed class VersionDetailsController : ControllerBase
     [HttpDelete("{versionId:int}")]
     public async Task<IActionResult> Delete(int versionId,CancellationToken ct)
     {
-        try{await _deliverables.DeleteDraftVersionAsync(versionId,User.GetDisplayName(),ct);return Ok(new{message="草稿版本已删除。"});}
+        try{await _deliverables.DeleteVersionAsync(versionId,User.GetDisplayName(),ct);return Ok(new{message="版本已删除。"});}
         catch(InvalidOperationException ex){return Conflict(new{message=ex.Message});}
         catch(KeyNotFoundException ex){return NotFound(new{message=ex.Message});}
     }

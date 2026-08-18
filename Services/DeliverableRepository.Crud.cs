@@ -85,36 +85,71 @@ public sealed partial class DeliverableRepository
         await tx.CommitAsync(ct);
     }
 
-    public async Task DeleteDraftVersionAsync(int versionId, string operatorName, CancellationToken ct = default)
+    public async Task DeleteVersionAsync(int versionId, string operatorName, CancellationToken ct = default)
     {
         await using var connection = await _database.OpenConnectionAsync(ct);
         using var tx = connection.BeginTransaction();
-        int deliverableId; string version;
+        int deliverableId; string version; string status;
         await using (var read = connection.CreateCommand())
         {
-            read.Transaction = tx; read.CommandText = "SELECT DeliverableId,InternalVersion,VersionStatus FROM DeliverableVersions WHERE Id=$id"; read.Parameters.AddValue("$id", versionId);
-            await using var reader = await read.ExecuteReaderAsync(ct); if (!await reader.ReadAsync(ct)) throw new KeyNotFoundException("版本不存在。" );
-            deliverableId = reader.GetInt32(0); version = reader.GetString(1); if (!string.Equals(reader.GetString(2), "DRAFT", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("只有草稿版本可以删除。" );
+            read.Transaction = tx;
+            read.CommandText = "SELECT DeliverableId,InternalVersion,VersionStatus FROM DeliverableVersions WHERE Id=$id";
+            read.Parameters.AddValue("$id", versionId);
+            await using var reader = await read.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct)) throw new KeyNotFoundException("版本不存在。" );
+            deliverableId = reader.GetInt32(0);
+            version = reader.GetString(1);
+            status = reader.GetString(2).ToUpperInvariant();
+            if (status is not ("DRAFT" or "DEPRECATED"))
+                throw new InvalidOperationException("只有草稿或已作废版本可以删除。" );
         }
-        await using (var count = connection.CreateCommand())
+
+        if (status == "DRAFT")
         {
-            count.Transaction = tx; count.CommandText = "SELECT COUNT(*) FROM DeliverableVersions WHERE DeliverableId=$id"; count.Parameters.AddValue("$id", deliverableId);
-            if (Convert.ToInt32(await count.ExecuteScalarAsync(ct)) <= 1) throw new InvalidOperationException("不能单独删除交付物的唯一草稿版本；如需清理，请删除整个草稿交付物。" );
+            await using var count = connection.CreateCommand();
+            count.Transaction = tx;
+            count.CommandText = "SELECT COUNT(*) FROM DeliverableVersions WHERE DeliverableId=$id";
+            count.Parameters.AddValue("$id", deliverableId);
+            if (Convert.ToInt32(await count.ExecuteScalarAsync(ct)) <= 1)
+                throw new InvalidOperationException("不能单独删除交付物的唯一草稿版本；如需清理，请删除整个交付物。" );
         }
+
         await using (var refs = connection.CreateCommand())
         {
-            refs.Transaction = tx; refs.CommandText = """
+            refs.Transaction = tx;
+            refs.CommandText = """
                 SELECT (SELECT COUNT(*) FROM ChangeRecords WHERE FromVersionId=$id OR ToVersionId=$id)
                      + (SELECT COUNT(*) FROM ProductBaselineHardware WHERE SoftwareVersionId=$id)
                      + (SELECT COUNT(*) FROM ProductBaselineDeliverables WHERE VersionId=$id)
                      + (SELECT COUNT(*) FROM DeliverableRelations WHERE SourceVersionId=$id OR TargetVersionId=$id)
-                     + (SELECT COUNT(*) FROM LifecycleRecords WHERE VersionId=$id OR ReplacementVersionId=$id)
+                     + (SELECT COUNT(*) FROM LifecycleRecords WHERE ReplacementVersionId=$id AND VersionId<>$id)
                      + (SELECT COUNT(*) FROM DeliverableVersions WHERE PreviousVersionId=$id);
-                """; refs.Parameters.AddValue("$id", versionId);
-            if (Convert.ToInt32(await refs.ExecuteScalarAsync(ct)) > 0) throw new InvalidOperationException("该草稿版本已经被流程、基线或关联关系引用，不能删除。" );
+                """;
+            refs.Parameters.AddValue("$id", versionId);
+            if (Convert.ToInt32(await refs.ExecuteScalarAsync(ct)) > 0)
+                throw new InvalidOperationException("该版本已被变更、基线、关联关系或其他版本引用，不能删除。" );
         }
-        await using (var delete = connection.CreateCommand()) { delete.Transaction = tx; delete.CommandText = "DELETE FROM DeliverableVersions WHERE Id=$id AND VersionStatus='DRAFT'"; delete.Parameters.AddValue("$id", versionId); if (await delete.ExecuteNonQueryAsync(ct) == 0) throw new InvalidOperationException("版本状态已变化，请刷新后重试。" ); }
-        await InsertAuditAsync(connection, tx, "Version", versionId, "DELETE_DRAFT", operatorName, $"删除草稿版本 {version}", ct);
+
+        if (status == "DEPRECATED")
+        {
+            await using var lifecycleDelete = connection.CreateCommand();
+            lifecycleDelete.Transaction = tx;
+            lifecycleDelete.CommandText = "DELETE FROM LifecycleRecords WHERE VersionId=$id";
+            lifecycleDelete.Parameters.AddValue("$id", versionId);
+            await lifecycleDelete.ExecuteNonQueryAsync(ct);
+        }
+
+        await using (var delete = connection.CreateCommand())
+        {
+            delete.Transaction = tx;
+            delete.CommandText = "DELETE FROM DeliverableVersions WHERE Id=$id AND VersionStatus IN ('DRAFT','DEPRECATED')";
+            delete.Parameters.AddValue("$id", versionId);
+            if (await delete.ExecuteNonQueryAsync(ct) == 0)
+                throw new InvalidOperationException("版本状态已变化，请刷新后重试。" );
+        }
+        var action = status == "DRAFT" ? "DELETE_DRAFT" : "DELETE_DEPRECATED";
+        var label = status == "DRAFT" ? "草稿" : "已作废";
+        await InsertAuditAsync(connection, tx, "Version", versionId, action, operatorName, $"删除{label}版本 {version}", ct);
         await tx.CommitAsync(ct);
     }
 }

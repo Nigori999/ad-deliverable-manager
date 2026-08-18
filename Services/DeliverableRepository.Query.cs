@@ -30,17 +30,15 @@ public sealed partial class DeliverableRepository
                    CASE WHEN EXISTS(SELECT 1 FROM DeliverableVersions dv WHERE dv.DeliverableId=d.Id)
                           AND NOT EXISTS(SELECT 1 FROM DeliverableVersions dv WHERE dv.DeliverableId=d.Id AND dv.VersionStatus<>'DRAFT')
                         THEN 1 ELSE 0 END AS CanEditDraft,
-                   CASE WHEN EXISTS(SELECT 1 FROM DeliverableVersions dv WHERE dv.DeliverableId=d.Id)
-                          AND NOT EXISTS(SELECT 1 FROM DeliverableVersions dv WHERE dv.DeliverableId=d.Id AND dv.VersionStatus<>'DRAFT')
+                   CASE WHEN NOT EXISTS(SELECT 1 FROM DeliverableVersions dv WHERE dv.DeliverableId=d.Id AND dv.VersionStatus NOT IN ('DRAFT','DEPRECATED'))
                           AND NOT EXISTS(SELECT 1 FROM ChangeRecords c WHERE c.DeliverableId=d.Id)
-                          AND NOT EXISTS(SELECT 1 FROM LifecycleRecords l WHERE l.DeliverableId=d.Id)
                           AND NOT EXISTS(SELECT 1 FROM DeliverableRelations r WHERE r.SourceDeliverableId=d.Id OR r.TargetDeliverableId=d.Id)
                           AND NOT EXISTS(SELECT 1 FROM ProductBaselineHardware bh JOIN DeliverableVersions bv ON bv.Id=bh.SoftwareVersionId WHERE bv.DeliverableId=d.Id)
                           AND NOT EXISTS(SELECT 1 FROM ProductBaselineDeliverables bd JOIN DeliverableVersions bv ON bv.Id=bd.VersionId WHERE bv.DeliverableId=d.Id)
-                        THEN 1 ELSE 0 END AS CanDeleteDraft
+                        THEN 1 ELSE 0 END AS CanDelete
             FROM Deliverables d JOIN Departments dep ON dep.Id=d.DepartmentId JOIN DeliverableTypes t ON t.Id=d.DeliverableTypeId JOIN DeliverableCategories cat ON cat.Id=d.CategoryId JOIN Projects p ON p.Id=d.ProjectId LEFT JOIN DeliverableVersions v ON v.Id=d.CurrentVersionId {where} ORDER BY d.UpdatedAt DESC LIMIT $limit OFFSET $offset;
             """;foreach(var(name,value)in parameters)command.Parameters.AddValue(name,value);command.Parameters.AddValue("$limit",pageSize);command.Parameters.AddValue("$offset",(page-1)*pageSize);
-        var items=new List<object>();await using var reader=await command.ExecuteReaderAsync(cancellationToken);while(await reader.ReadAsync(cancellationToken))items.Add(new{id=reader.GetInt32(0),code=reader.GetString(1),name=reader.GetString(2),department=reader.GetString(3),type=reader.GetString(4),categoryId=reader.GetInt32(5),categoryCode=reader.GetString(6),category=reader.GetString(7),project=reader.GetString(8),responsiblePerson=reader.GetString(9),confidentiality=reader.GetString(10),sharePolicy=reader.GetString(11),lifecycleStatus=reader.GetString(12),updatedAt=reader.GetString(13),revision=reader.GetInt32(14),currentVersion=reader.GetNullableString(15),versionStatus=reader.GetNullableString(16),serverPath=reader.GetNullableString(17),canEditDraft=reader.GetInt32(18)==1,canDeleteDraft=reader.GetInt32(19)==1});return new{items,total,page,pageSize};
+        var items=new List<object>();await using var reader=await command.ExecuteReaderAsync(cancellationToken);while(await reader.ReadAsync(cancellationToken))items.Add(new{id=reader.GetInt32(0),code=reader.GetString(1),name=reader.GetString(2),department=reader.GetString(3),type=reader.GetString(4),categoryId=reader.GetInt32(5),categoryCode=reader.GetString(6),category=reader.GetString(7),project=reader.GetString(8),responsiblePerson=reader.GetString(9),confidentiality=reader.GetString(10),sharePolicy=reader.GetString(11),lifecycleStatus=reader.GetString(12),updatedAt=reader.GetString(13),revision=reader.GetInt32(14),currentVersion=reader.GetNullableString(15),versionStatus=reader.GetNullableString(16),serverPath=reader.GetNullableString(17),canEditDraft=reader.GetInt32(18)==1,canDelete=reader.GetInt32(19)==1});return new{items,total,page,pageSize};
     }
 
     public async Task<object?> GetAsync(int id,CancellationToken cancellationToken)
