@@ -1,33 +1,16 @@
 async function renderUsers(){
   setPage('用户管理','管理登录账号、角色绑定和账号状态');
   const data=await api('/internal/users');
-  content.innerHTML=`<section class="card"><div class="card-head"><div><h3>用户</h3><p class="muted section-note">用户只绑定角色，具体功能权限和数据范围由角色决定。</p></div>${hasPermission('USER_CREATE')?'<button type="button" id="new-user" class="btn btn-primary" data-permission="USER_CREATE">+ 新增用户</button>':''}</div><div class="table-wrap">${data.items.length?`<table><thead><tr><th>用户名</th><th>显示名称</th><th>角色</th><th>状态</th><th>首次改密</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${data.items.map(x=>`<tr><td class="code">${esc(x.username)}</td><td>${esc(x.displayName)}</td><td>${esc(x.roles||'未分配角色')}</td><td>${x.isEnabled?'<span class="badge released">启用</span>':'<span class="badge deprecated">停用</span>'}</td><td>${x.mustChangePassword?'是':'否'}</td><td>${esc(fmtDate(x.lastLoginAt))}</td><td><div class="inline-actions">${hasPermission('USER_EDIT')?`<button type="button" class="btn btn-light btn-sm" data-user-edit="${x.id}" data-permission="USER_EDIT">编辑</button>`:''}${hasPermission('USER_RESET_PASSWORD')?`<button type="button" class="btn btn-light btn-sm" data-user-reset="${x.id}" data-permission="USER_RESET_PASSWORD">重置密码</button>`:''}</div></td></tr>`).join('')}</tbody></table>`:'<div class="empty">暂无用户</div>'}</div></section>`;
+  content.innerHTML=`<section class="card"><div class="card-head"><div><h3>用户</h3><p class="muted section-note">用户只绑定角色，具体功能权限和数据范围由角色决定。</p></div>${hasPermission('USER_CREATE')?'<button type="button" id="new-user" class="btn btn-primary" data-permission="USER_CREATE">+ 新增用户</button>':''}</div><div class="table-wrap">${data.items.length?`<table><thead><tr><th>用户名</th><th>显示名称</th><th>角色</th><th>状态</th><th>首次改密</th><th>最近登录</th><th>操作</th></tr></thead><tbody>${data.items.map(x=>`<tr><td class="code">${esc(x.username)}</td><td>${esc(x.displayName)}</td><td>${esc(x.roles||'未分配角色')}</td><td>${x.isEnabled?'<span class="badge released">启用</span>':'<span class="badge deprecated">停用</span>'}</td><td>${x.mustChangePassword?'是':'否'}</td><td>${esc(fmtDate(x.lastLoginAt))}</td><td><div class="inline-actions">${hasPermission('USER_EDIT')?`<button type="button" class="btn btn-light btn-sm" data-user-edit="${x.id}" data-permission="USER_EDIT">编辑</button>`:''}${hasPermission('USER_RESET_PASSWORD')?`<button type="button" class="btn btn-light btn-sm" data-user-reset="${x.id}" data-permission="USER_RESET_PASSWORD">重置密码</button>`:''}${hasPermission('USER_DELETE')&&Number(x.id)!==Number(state.auth?.user?.id)?`<button type="button" class="btn btn-danger btn-sm" data-user-delete="${x.id}" data-permission="USER_DELETE">删除</button>`:''}</div></td></tr>`).join('')}</tbody></table>`:'<div class="empty">暂无用户</div>'}</div></section>`;
   byId('new-user')?.addEventListener('click',()=>openUserCreate(data.roles||[]));
   content.querySelectorAll('[data-user-edit]').forEach(b=>b.onclick=()=>openUserEdit(data.items.find(x=>x.id===Number(b.dataset.userEdit)),data.roles||[]));
   content.querySelectorAll('[data-user-reset]').forEach(b=>b.onclick=()=>openResetPassword(data.items.find(x=>x.id===Number(b.dataset.userReset))));
+  content.querySelectorAll('[data-user-delete]').forEach(b=>b.onclick=()=>deleteUser(data.items.find(x=>x.id===Number(b.dataset.userDelete))));
 }
 
 function roleOptions(roles,selected=[]){return roles.filter(x=>x.isEnabled).map(x=>`<label class="field-check"><input type="checkbox" name="roleIds" value="${x.id}" ${selected.includes(x.id)?'checked':''}><span>${esc(x.name)}</span></label>`).join('');}
-
-function userRoleCards(roles,selected=[]){
-  return roles.filter(x=>x.isEnabled).map(role=>`<label class="user-role-card ${selected.includes(role.id)?'selected':''}" data-user-role-card>
-    <input type="checkbox" name="roleIds" value="${role.id}" ${selected.includes(role.id)?'checked':''}>
-    <span class="user-role-check">✓</span>
-    <span class="user-role-copy"><strong>${esc(role.name)}</strong><small class="code">${esc(role.code)}</small><em>${esc(role.description||'未填写角色说明')}</em></span>
-    ${role.isSystemRole?'<span class="badge">系统角色</span>':''}
-  </label>`).join('');
-}
-
-function bindUserRoleCards(form){
-  const summary=form.querySelector('[data-role-selection-summary]');
-  const refresh=()=>{
-    const checked=[...form.querySelectorAll('input[name="roleIds"]:checked')];
-    form.querySelectorAll('[data-user-role-card]').forEach(card=>card.classList.toggle('selected',card.querySelector('input').checked));
-    if(summary)summary.textContent=`已选择 ${checked.length} 个角色`;
-  };
-  form.querySelectorAll('input[name="roleIds"]').forEach(input=>input.addEventListener('change',refresh));
-  refresh();
-}
+function userRoleCards(roles,selected=[]){return roles.filter(x=>x.isEnabled).map(role=>`<label class="user-role-card ${selected.includes(role.id)?'selected':''}" data-user-role-card><input type="checkbox" name="roleIds" value="${role.id}" ${selected.includes(role.id)?'checked':''}><span class="user-role-check">✓</span><span class="user-role-copy"><strong>${esc(role.name)}</strong><small class="code">${esc(role.code)}</small><em>${esc(role.description||'未填写角色说明')}</em></span>${role.isSystemRole?'<span class="badge">系统角色</span>':''}</label>`).join('');}
+function bindUserRoleCards(form){const summary=form.querySelector('[data-role-selection-summary]');const refresh=()=>{const checked=[...form.querySelectorAll('input[name="roleIds"]:checked')];form.querySelectorAll('[data-user-role-card]').forEach(card=>card.classList.toggle('selected',card.querySelector('input').checked));if(summary)summary.textContent=`已选择 ${checked.length} 个角色`;};form.querySelectorAll('input[name="roleIds"]').forEach(input=>input.addEventListener('change',refresh));refresh();}
 
 function openUserCreate(roles){
   const body=`<form id="user-form"><div class="form-grid"><div class="field"><label>用户名 *</label><input name="username" required minlength="3" maxlength="40"></div><div class="field"><label>显示名称 *</label><input name="displayName" required></div><div class="field"><label>初始密码 *</label><input name="password" type="password" required minlength="8"></div></div><div class="field"><label>角色 *</label><div class="field-check-grid">${roleOptions(roles)}</div></div><label class="check-line"><input type="checkbox" name="mustChangePassword" checked>首次登录必须修改密码</label></form>`;
@@ -37,41 +20,10 @@ function openUserCreate(roles){
 function openUserEdit(user,roles){
   const selected=[];const roleNames=new Set((user.roles||'').split('、'));roles.forEach(r=>{if(roleNames.has(r.name))selected.push(r.id);});
   const isCurrentUser=Number(user.id)===Number(state.auth?.user?.id);
-  const body=`<form id="user-edit-form" class="user-edit-form">
-    <section class="user-edit-section">
-      <div class="user-edit-section-head"><div><span class="user-edit-step">01</span><h4>账号信息</h4><p>用户名作为登录标识不可修改；显示名称用于系统内展示和审计记录。</p></div></div>
-      <div class="user-account-summary">
-        <div class="user-avatar-mark">${esc((user.displayName||user.username||'U').slice(0,1).toUpperCase())}</div>
-        <div class="user-account-main"><strong>${esc(user.displayName)}</strong><span class="code">${esc(user.username)}</span></div>
-        <div>${user.isEnabled?'<span class="badge released">当前启用</span>':'<span class="badge deprecated">当前停用</span>'}</div>
-      </div>
-      <div class="form-grid user-edit-basic-grid">
-        <div class="field"><label>用户名</label><input value="${esc(user.username)}" disabled><span class="form-hint">登录账号创建后不可修改</span></div>
-        <div class="field"><label>显示名称 *</label><input name="displayName" value="${esc(user.displayName)}" required maxlength="80" placeholder="请输入用户在系统中的显示名称"><span class="form-hint">用于页面展示、操作记录和审计日志</span></div>
-      </div>
-    </section>
-
-    <section class="user-edit-section">
-      <div class="user-edit-section-head"><div><span class="user-edit-step">02</span><h4>角色分配</h4><p>用户最终可用的功能权限与数据范围由所绑定角色共同决定，至少需要保留一个启用角色。</p></div><strong class="user-role-summary" data-role-selection-summary>已选择 0 个角色</strong></div>
-      <div class="user-role-grid">${userRoleCards(roles,selected)}</div>
-    </section>
-
-    <section class="user-edit-section">
-      <div class="user-edit-section-head"><div><span class="user-edit-step">03</span><h4>账号状态</h4><p>停用后用户将不能继续访问系统；密码重置请使用用户列表中的“重置密码”操作。</p></div></div>
-      <label class="user-status-toggle ${isCurrentUser?'disabled':''}">
-        <span><strong>允许该账号登录</strong><small>${isCurrentUser?'当前登录账号不能停用自身。':'关闭后，该用户现有登录会话将在后续请求中失效。'}</small></span>
-        <input type="checkbox" name="isEnabled" ${user.isEnabled?'checked':''} ${isCurrentUser?'disabled':''}>
-        <span class="user-toggle-track"><span></span></span>
-      </label>
-      ${isCurrentUser?'<div class="notice-panel user-self-notice">你正在编辑当前登录账号。为避免管理员误将自己锁定在系统外，账号状态不能在这里关闭。</div>':''}
-    </section>
-  </form>`;
-  const modal=showModal('编辑用户',body,{submitText:'保存修改',onSubmit:async close=>{const form=byId('user-edit-form');if(!form.reportValidity())throw new Error('请填写显示名称。');const fd=new FormData(form);const roleIds=[...form.querySelectorAll('input[name="roleIds"]:checked')].map(x=>Number(x.value));if(!roleIds.length)throw new Error('请至少选择一个角色。');await api(`/internal/users/${user.id}`,{method:'PUT',body:JSON.stringify({displayName:fd.get('displayName'),roleIds,isEnabled:isCurrentUser?true:fd.has('isEnabled'),revision:user.revision})});close();toast('用户信息与角色配置已更新。');await renderUsers();}});
-  modal.root.classList.add('user-edit-modal');
-  bindUserRoleCards(byId('user-edit-form'));
+  const body=`<form id="user-edit-form" class="user-edit-form"><section class="user-edit-section"><div class="user-edit-section-head"><div><span class="user-edit-step">01</span><h4>账号信息</h4><p>用户名作为登录标识不可修改；显示名称用于系统内展示和审计记录。</p></div></div><div class="user-account-summary"><div class="user-avatar-mark">${esc((user.displayName||user.username||'U').slice(0,1).toUpperCase())}</div><div class="user-account-main"><strong>${esc(user.displayName)}</strong><span class="code">${esc(user.username)}</span></div><div>${user.isEnabled?'<span class="badge released">当前启用</span>':'<span class="badge deprecated">当前停用</span>'}</div></div><div class="form-grid user-edit-basic-grid"><div class="field"><label>用户名</label><input value="${esc(user.username)}" disabled><span class="form-hint">登录账号创建后不可修改</span></div><div class="field"><label>显示名称 *</label><input name="displayName" value="${esc(user.displayName)}" required maxlength="80" placeholder="请输入用户在系统中的显示名称"><span class="form-hint">用于页面展示、操作记录和审计日志</span></div></div></section><section class="user-edit-section"><div class="user-edit-section-head"><div><span class="user-edit-step">02</span><h4>角色分配</h4><p>用户最终可用的功能权限与数据范围由所绑定角色共同决定，至少需要保留一个启用角色。</p></div><strong class="user-role-summary" data-role-selection-summary>已选择 0 个角色</strong></div><div class="user-role-grid">${userRoleCards(roles,selected)}</div></section><section class="user-edit-section"><div class="user-edit-section-head"><div><span class="user-edit-step">03</span><h4>账号状态</h4><p>停用后用户将不能继续访问系统；密码重置请使用用户列表中的“重置密码”操作。</p></div></div><label class="user-status-toggle ${isCurrentUser?'disabled':''}"><span><strong>允许该账号登录</strong><small>${isCurrentUser?'当前登录账号不能停用自身。':'关闭后，该用户现有登录会话将在后续请求中失效。'}</small></span><input type="checkbox" name="isEnabled" ${user.isEnabled?'checked':''} ${isCurrentUser?'disabled':''}><span class="user-toggle-track"><span></span></span></label>${isCurrentUser?'<div class="notice-panel user-self-notice">你正在编辑当前登录账号。为避免管理员误将自己锁定在系统外，账号状态不能在这里关闭。</div>':''}</section></form>`;
+  const modal=showModal('编辑用户',body,{submitText:'保存修改',onSubmit:async close=>{const form=byId('user-edit-form');if(!form.reportValidity())throw new Error('请填写显示名称。');const fd=new FormData(form);const roleIds=[...form.querySelectorAll('input[name="roleIds"]:checked')].map(x=>Number(x.value));if(!roleIds.length)throw new Error('请至少选择一个角色。');await api(`/internal/users/${user.id}`,{method:'PUT',body:JSON.stringify({displayName:fd.get('displayName'),roleIds,isEnabled:isCurrentUser?true:fd.has('isEnabled'),revision:user.revision})});close();toast('用户信息与角色配置已更新。');await renderUsers();}});modal.root.classList.add('user-edit-modal');bindUserRoleCards(byId('user-edit-form'));
 }
 
-function openResetPassword(user){
-  const body=`<form id="reset-password-form"><p class="muted">为 <strong>${esc(user.displayName)}</strong>（${esc(user.username)}）设置新密码。</p><div class="field"><label>新密码 *</label><input type="password" name="newPassword" minlength="8" required></div><label class="check-line"><input type="checkbox" name="mustChangePassword" checked>下次登录必须修改密码</label></form>`;
-  showModal('重置密码',body,{small:true,submitText:'确认重置',onSubmit:async close=>{const form=byId('reset-password-form');if(!form.reportValidity())throw new Error('请输入符合规则的新密码。');const fd=new FormData(form);await api(`/internal/users/${user.id}/reset-password`,{method:'POST',body:JSON.stringify({newPassword:fd.get('newPassword'),mustChangePassword:fd.has('mustChangePassword')})});close();toast('密码已重置。');await renderUsers();}});
-}
+function openResetPassword(user){const body=`<form id="reset-password-form"><p class="muted">为 <strong>${esc(user.displayName)}</strong>（${esc(user.username)}）设置新密码。</p><div class="field"><label>新密码 *</label><input type="password" name="newPassword" minlength="8" required></div><label class="check-line"><input type="checkbox" name="mustChangePassword" checked>下次登录必须修改密码</label></form>`;showModal('重置密码',body,{small:true,submitText:'确认重置',onSubmit:async close=>{const form=byId('reset-password-form');if(!form.reportValidity())throw new Error('请输入符合规则的新密码。');const fd=new FormData(form);await api(`/internal/users/${user.id}/reset-password`,{method:'POST',body:JSON.stringify({newPassword:fd.get('newPassword'),mustChangePassword:fd.has('mustChangePassword')})});close();toast('密码已重置。');await renderUsers();}});}
+
+async function deleteUser(user){if(!user)return;if(Number(user.id)===Number(state.auth?.user?.id))return toast('不能删除当前登录账号。','error');const result=await confirmAction('删除用户',`确认永久删除用户“${user.displayName}（${user.username}）”吗？该用户的角色绑定会一并删除，此操作不可恢复。`,{submitText:'确认删除',danger:true});if(!result.confirmed)return;try{await api(`/internal/users/${user.id}`,{method:'DELETE'});toast('用户已删除。');await renderUsers();}catch(error){toast(error.message,'error');}}

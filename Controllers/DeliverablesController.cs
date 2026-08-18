@@ -37,8 +37,7 @@ public sealed class DeliverablesController : ControllerBase
         try
         {
             if(!await _permissions.HasCreateScopeAsync(User.GetUserId(),PermissionCatalog.DeliveryCreate,request.DepartmentId,request.ProjectId,request.DeliverableTypeId,ct))return Forbid();
-            request.Operator=User.GetDisplayName();
-            request.InitialVersion.Operator=request.Operator;
+            request.Operator=User.GetDisplayName(); request.InitialVersion.Operator=request.Operator;
             var result=await _repository.CreateAsync(request,ct);
             return Ok(new{id=result.Id,code=result.Code,message="交付物及首个版本已创建。"});
         }
@@ -47,7 +46,19 @@ public sealed class DeliverablesController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
-    public async Task<IActionResult> Update(int id,[FromBody]DeliverableUpdateRequest request,CancellationToken ct){try{request.Operator=User.GetDisplayName();var updated=await _repository.UpdateAsync(id,request,ct);return updated?Ok(new{message="交付物信息已更新。"}):Conflict(new{message="数据已被其他人修改，请刷新后重试。"});}catch(ArgumentException ex){return BadRequest(new{message=ex.Message});}}
+    public async Task<IActionResult> Update(int id,[FromBody]DeliverableUpdateRequest request,CancellationToken ct)
+    {
+        try
+        {
+            await _repository.EnsureDraftDeliverableEditableAsync(id,request.CategoryId,ct);
+            request.Operator=User.GetDisplayName();
+            var updated=await _repository.UpdateAsync(id,request,ct);
+            return updated?Ok(new{message="草稿交付物信息已更新。"}):Conflict(new{message="数据已被其他人修改，请刷新后重试。"});
+        }
+        catch(ArgumentException ex){return BadRequest(new{message=ex.Message});}
+        catch(InvalidOperationException ex){return Conflict(new{message=ex.Message});}
+        catch(KeyNotFoundException ex){return NotFound(new{message=ex.Message});}
+    }
 
     [HttpPost("{id:int}/versions")]
     public async Task<IActionResult> AddVersion(int id,[FromBody]VersionCreateRequest request,CancellationToken ct){try{await _repository.EnsureDirectVersionCreationAllowedAsync(id,true,ct);request.Operator=User.GetDisplayName();var versionId=await _repository.AddVersionWithOpenCyclePolicyAsync(id,request,ct);return Ok(new{id=versionId,message="新版本已创建为草稿。"});}catch(ArgumentException ex){return BadRequest(new{message=ex.Message});}catch(InvalidOperationException ex){return Conflict(new{message=ex.Message});}catch(KeyNotFoundException ex){return NotFound(new{message=ex.Message});}catch(SqliteException ex)when(ex.SqliteErrorCode==19){return Conflict(new{message="该内部版本号已存在。"});}}
