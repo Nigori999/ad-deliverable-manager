@@ -86,13 +86,6 @@ public sealed partial class DeliverableRepository
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static string NormalizeCode(string value)
-    {
-        var normalized = new string(value.Trim().ToUpperInvariant().Where(c => char.IsLetterOrDigit(c) || c == '_').ToArray());
-        if (string.IsNullOrEmpty(normalized)) throw new ArgumentException("类别编码只能包含字母、数字或下划线。" );
-        return normalized;
-    }
-
     private static string NormalizeVersion(string value)
     {
         var version = value.Trim().ToUpperInvariant();

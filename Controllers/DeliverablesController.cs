@@ -14,13 +14,11 @@ public sealed class DeliverablesController : ControllerBase
 {
     private readonly DeliverableRepository _repository;
     private readonly PermissionService _permissions;
-    private readonly DatabaseService _database;
 
-    public DeliverablesController(DeliverableRepository repository, PermissionService permissions, DatabaseService database)
+    public DeliverablesController(DeliverableRepository repository, PermissionService permissions)
     {
         _repository = repository;
         _permissions = permissions;
-        _database = database;
     }
 
     [HttpGet]
@@ -39,7 +37,6 @@ public sealed class DeliverablesController : ControllerBase
         try
         {
             if(!await _permissions.HasCreateScopeAsync(User.GetUserId(),PermissionCatalog.DeliveryCreate,request.DepartmentId,request.ProjectId,request.DeliverableTypeId,ct))return Forbid();
-            request.ObjectCode=await ResolveCategoryCodeAsync(request.CategoryId,request.DeliverableTypeId,ct);
             request.Operator=User.GetDisplayName();
             request.InitialVersion.Operator=request.Operator;
             var result=await _repository.CreateAsync(request,ct);
@@ -63,17 +60,4 @@ public sealed class DeliverablesController : ControllerBase
 
     [HttpPost("{id:int}/archive")]
     public async Task<IActionResult> Archive(int id,[FromBody]LifecycleActionRequest request,CancellationToken ct){try{await _repository.ArchiveAsync(id,User.GetDisplayName(),request.Reason,ct);return Ok(new{message="交付物已归档，历史记录仍保留。"});}catch(KeyNotFoundException ex){return NotFound(new{message=ex.Message});}}
-
-    private async Task<string> ResolveCategoryCodeAsync(int categoryId,int typeId,CancellationToken ct)
-    {
-        if(categoryId<=0)throw new ArgumentException("请选择交付物类别。");
-        await using var connection=await _database.OpenConnectionAsync(ct);
-        await using var command=connection.CreateCommand();
-        command.CommandText="SELECT CategoryCode FROM DeliverableCategories WHERE Id=$categoryId AND DeliverableTypeId=$typeId AND IsEnabled=1";
-        command.Parameters.AddWithValue("$categoryId",categoryId);
-        command.Parameters.AddWithValue("$typeId",typeId);
-        var value=await command.ExecuteScalarAsync(ct);
-        if(value is null)throw new ArgumentException("所选交付物类别与交付物类型不匹配或已停用，请重新选择。");
-        return Convert.ToString(value)?.Trim().ToUpperInvariant()??throw new ArgumentException("交付物类别编码无效。");
-    }
 }

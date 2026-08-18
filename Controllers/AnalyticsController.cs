@@ -21,7 +21,7 @@ public sealed class AnalyticsController : ControllerBase
         {
             command.CommandText = """
                 SELECT d.Id,d.DeliverableCode,d.UnifiedName,dep.DepartmentName,t.TypeCode,t.TypeName,cat.CategoryName,p.ProjectName,
-                       d.ObjectCode,d.ResponsiblePerson,d.DefaultConfidentiality,d.DefaultSharePolicy,d.UpdatedAt,
+                       d.ResponsiblePerson,d.DefaultConfidentiality,d.DefaultSharePolicy,d.UpdatedAt,
                        v.Id,v.InternalVersion,v.OriginalFileName,v.ServerPath,v.Author,v.VersionStatus,v.HashValue,
                        h.HardwareModel,h.SupplierName,h.SoftwarePackageType,
                        prd.ProductModule,prd.FunctionName,prd.ProductOwner,
@@ -40,26 +40,26 @@ public sealed class AnalyticsController : ControllerBase
             {
                 var required = new List<(string Name, bool Complete)>
                 {
-                    ("交付物类别",Has(reader,6)),("对象编码",Has(reader,8)),("责任人",Has(reader,9)),("私密等级",Has(reader,10)),
-                    ("分享策略",Has(reader,11)),("当前版本",!reader.IsDBNull(13)),("内部版本",Has(reader,14)),
-                    ("原始文件名",Has(reader,15)),("服务器路径",Has(reader,16)),("编制/提供人",Has(reader,17))
+                    ("交付物类别",Has(reader,6)),("责任人",Has(reader,8)),("私密等级",Has(reader,9)),
+                    ("分享策略",Has(reader,10)),("当前版本",!reader.IsDBNull(12)),("内部版本",Has(reader,13)),
+                    ("原始文件名",Has(reader,14)),("服务器路径",Has(reader,15)),("编制/提供人",Has(reader,16))
                 };
                 var typeCode = reader.GetString(4);
                 if (typeCode == "SWP")
                 {
-                    required.AddRange([("硬件型号",Has(reader,20)),("供应商",Has(reader,21)),("软件包类型",Has(reader,22)),("校验值",Has(reader,19))]);
+                    required.AddRange([("硬件型号",Has(reader,19)),("供应商",Has(reader,20)),("软件包类型",Has(reader,21)),("校验值",Has(reader,18))]);
                 }
                 else if (typeCode == "PRD")
-                    required.AddRange([("产品模块",Has(reader,23)),("功能名称",Has(reader,24)),("产品负责人",Has(reader,25))]);
+                    required.AddRange([("产品模块",Has(reader,22)),("功能名称",Has(reader,23)),("产品负责人",Has(reader,24))]);
                 else if (typeCode == "FR")
-                    required.AddRange([("所属系统",Has(reader,26)),("所属子系统",Has(reader,27)),("功能模块",Has(reader,28)),("功能负责人",Has(reader,29)),("系统负责人",Has(reader,30))]);
+                    required.AddRange([("所属系统",Has(reader,25)),("所属子系统",Has(reader,26)),("功能模块",Has(reader,27)),("功能负责人",Has(reader,28)),("系统负责人",Has(reader,29))]);
                 else if (typeCode == "TC")
-                    required.AddRange([("测试级别",Has(reader,31)),("测试模块",Has(reader,32)),("用例数量",!reader.IsDBNull(33)),("测试负责人",Has(reader,34))]);
+                    required.AddRange([("测试级别",Has(reader,30)),("测试模块",Has(reader,31)),("用例数量",!reader.IsDBNull(32)),("测试负责人",Has(reader,33))]);
 
                 var completed = required.Count(x => x.Complete);
                 rows.Add(new CompletionItem(reader.GetInt32(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),
                     typeCode,reader.GetString(5),reader.GetString(6),reader.GetString(7),completed,required.Count,
-                    required.Where(x=>!x.Complete).Select(x=>x.Name).ToArray(),reader.GetString(12),reader.GetNullableString(18)));
+                    required.Where(x=>!x.Complete).Select(x=>x.Name).ToArray(),reader.GetString(11),reader.GetNullableString(17)));
             }
         }
 
