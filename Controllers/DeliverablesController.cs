@@ -14,11 +14,13 @@ public sealed class DeliverablesController : ControllerBase
 {
     private readonly DeliverableRepository _repository;
     private readonly PermissionService _permissions;
+    private readonly DatabaseService _database;
 
-    public DeliverablesController(DeliverableRepository repository, PermissionService permissions)
+    public DeliverablesController(DeliverableRepository repository, PermissionService permissions, DatabaseService database)
     {
         _repository = repository;
         _permissions = permissions;
+        _database = database;
     }
 
     [HttpGet]
@@ -32,7 +34,20 @@ public sealed class DeliverablesController : ControllerBase
     public async Task<IActionResult> Get(int id,CancellationToken ct){var result=await _repository.GetAsync(id,ct);if(result is null)return NotFound(new{message="交付物不存在。"});if(!await _permissions.HasPermissionAsync(User.GetUserId(),PermissionCatalog.DeliveryView,id,ct))return Forbid();return Ok(result);}
 
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody]DeliverableCreateRequest request,CancellationToken ct){try{if(!await _permissions.HasCreateScopeAsync(User.GetUserId(),PermissionCatalog.DeliveryCreate,request.DepartmentId,request.ProjectId,request.DeliverableTypeId,ct))return Forbid();request.Operator=User.GetDisplayName();request.InitialVersion.Operator=request.Operator;var result=await _repository.CreateAsync(request,ct);return Ok(new{id=result.Id,code=result.Code,message="交付物及首个版本已创建。"});}catch(ArgumentException ex){return BadRequest(new{message=ex.Message});}catch(SqliteException ex)when(ex.SqliteErrorCode==19){return Conflict(new{message="交付物编码、版本号或类别约束发生重复，请重试。"});}}
+    public async Task<IActionResult> Create([FromBody]DeliverableCreateRequest request,CancellationToken ct)
+    {
+        try
+        {
+            if(!await _permissions.HasCreateScopeAsync(User.GetUserId(),PermissionCatalog.DeliveryCreate,request.DepartmentId,request.ProjectId,request.DeliverableTypeId,ct))return Forbid();
+            request.ObjectCode=await ResolveCategoryCodeAsync(request.CategoryId,request.DeliverableTypeId,ct);
+            request.Operator=User.GetDisplayName();
+            request.InitialVersion.Operator=request.Operator;
+            var result=await _repository.CreateAsync(request,ct);
+            return Ok(new{id=result.Id,code=result.Code,message="交付物及首个版本已创建。"});
+        }
+        catch(ArgumentException ex){return BadRequest(new{message=ex.Message});}
+        catch(SqliteException ex)when(ex.SqliteErrorCode==19){return Conflict(new{message="交付物编码、版本号或类别约束发生重复，请重试。"});}
+    }
 
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id,[FromBody]DeliverableUpdateRequest request,CancellationToken ct){try{request.Operator=User.GetDisplayName();var updated=await _repository.UpdateAsync(id,request,ct);return updated?Ok(new{message="交付物信息已更新。"}):Conflict(new{message="数据已被其他人修改，请刷新后重试。"});}catch(ArgumentException ex){return BadRequest(new{message=ex.Message});}}
@@ -48,4 +63,17 @@ public sealed class DeliverablesController : ControllerBase
 
     [HttpPost("{id:int}/archive")]
     public async Task<IActionResult> Archive(int id,[FromBody]LifecycleActionRequest request,CancellationToken ct){try{await _repository.ArchiveAsync(id,User.GetDisplayName(),request.Reason,ct);return Ok(new{message="交付物已归档，历史记录仍保留。"});}catch(KeyNotFoundException ex){return NotFound(new{message=ex.Message});}}
+
+    private async Task<string> ResolveCategoryCodeAsync(int categoryId,int typeId,CancellationToken ct)
+    {
+        if(categoryId<=0)throw new ArgumentException("请选择交付物类别。");
+        await using var connection=await _database.OpenConnectionAsync(ct);
+        await using var command=connection.CreateCommand();
+        command.CommandText="SELECT CategoryCode FROM DeliverableCategories WHERE Id=$categoryId AND DeliverableTypeId=$typeId AND IsEnabled=1";
+        command.Parameters.AddWithValue("$categoryId",categoryId);
+        command.Parameters.AddWithValue("$typeId",typeId);
+        var value=await command.ExecuteScalarAsync(ct);
+        if(value is null)throw new ArgumentException("所选交付物类别与交付物类型不匹配或已停用，请重新选择。");
+        return Convert.ToString(value)?.Trim().ToUpperInvariant()??throw new ArgumentException("交付物类别编码无效。");
+    }
 }
