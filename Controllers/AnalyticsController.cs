@@ -1,3 +1,5 @@
+using AdDeliverableManager.Models;
+using AdDeliverableManager.Security;
 using AdDeliverableManager.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,10 +18,12 @@ public sealed class AnalyticsController : ControllerBase
     public async Task<IActionResult> Completeness(CancellationToken cancellationToken)
     {
         await using var connection = await _database.OpenConnectionAsync(cancellationToken);
+        var userId = User.GetUserId();
+        var scope = PermissionService.BuildDataScopePredicate("d", PermissionCatalog.AnalyticsView);
         var rows = new List<CompletionItem>();
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = """
+            command.CommandText = $"""
                 SELECT d.Id,d.DeliverableCode,d.UnifiedName,dep.DepartmentName,t.TypeCode,t.TypeName,cat.CategoryName,p.ProjectName,
                        d.ResponsiblePerson,d.DefaultConfidentiality,d.DefaultSharePolicy,d.UpdatedAt,
                        v.Id,v.InternalVersion,v.OriginalFileName,v.ServerPath,v.Author,v.VersionStatus,v.HashValue,
@@ -33,8 +37,10 @@ public sealed class AnalyticsController : ControllerBase
                 JOIN Projects p ON p.Id=d.ProjectId LEFT JOIN DeliverableVersions v ON v.Id=d.CurrentVersionId
                 LEFT JOIN HardwarePackageDetails h ON h.VersionId=v.Id LEFT JOIN PrdDetails prd ON prd.VersionId=v.Id
                 LEFT JOIN FrDetails fr ON fr.VersionId=v.Id LEFT JOIN TestCaseDetails tc ON tc.VersionId=v.Id
-                WHERE d.LifecycleStatus='ACTIVE' ORDER BY dep.SortOrder,p.ProjectCode,t.SortOrder,cat.SortOrder,d.DeliverableCode;
+                WHERE d.LifecycleStatus='ACTIVE' AND {scope}
+                ORDER BY dep.SortOrder,p.ProjectCode,t.SortOrder,cat.SortOrder,d.DeliverableCode;
                 """;
+            command.Parameters.AddWithValue("$scopeUserId", userId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
@@ -46,9 +52,7 @@ public sealed class AnalyticsController : ControllerBase
                 };
                 var typeCode = reader.GetString(4);
                 if (typeCode == "SWP")
-                {
                     required.AddRange([("硬件型号",Has(reader,19)),("供应商",Has(reader,20)),("软件包类型",Has(reader,21)),("校验值",Has(reader,18))]);
-                }
                 else if (typeCode == "PRD")
                     required.AddRange([("产品模块",Has(reader,22)),("功能名称",Has(reader,23)),("产品负责人",Has(reader,24))]);
                 else if (typeCode == "FR")
@@ -65,37 +69,45 @@ public sealed class AnalyticsController : ControllerBase
 
         var totalChecks=rows.Sum(x=>x.TotalChecks);var completedChecks=rows.Sum(x=>x.CompletedChecks);var metadataPercent=Percent(completedChecks,totalChecks);
         var departmentCompleteness=rows.GroupBy(x=>x.Department).Select(g=>new{name=g.Key,total=g.Count(),complete=g.Count(x=>x.MissingFields.Length==0),percent=Percent(g.Sum(x=>x.CompletedChecks),g.Sum(x=>x.TotalChecks))}).ToArray();
-        var prdTotal=await ScalarAsync(connection,"SELECT COUNT(*) FROM Deliverables d JOIN DeliverableTypes t ON t.Id=d.DeliverableTypeId WHERE d.LifecycleStatus='ACTIVE' AND t.TypeCode='PRD'",cancellationToken);
-        var prdLinked=await ScalarAsync(connection,"SELECT COUNT(DISTINCT p.Id) FROM Deliverables p JOIN DeliverableTypes pt ON pt.Id=p.DeliverableTypeId JOIN DeliverableRelations r ON r.SourceDeliverableId=p.Id JOIN Deliverables f ON f.Id=r.TargetDeliverableId JOIN DeliverableTypes ft ON ft.Id=f.DeliverableTypeId WHERE p.LifecycleStatus='ACTIVE' AND pt.TypeCode='PRD' AND ft.TypeCode='FR' AND r.RelationType='DERIVES'",cancellationToken);
-        var frTotal=await ScalarAsync(connection,"SELECT COUNT(*) FROM Deliverables d JOIN DeliverableTypes t ON t.Id=d.DeliverableTypeId WHERE d.LifecycleStatus='ACTIVE' AND t.TypeCode='FR'",cancellationToken);
-        var frLinked=await ScalarAsync(connection,"SELECT COUNT(DISTINCT f.Id) FROM Deliverables f JOIN DeliverableTypes ft ON ft.Id=f.DeliverableTypeId JOIN DeliverableRelations r ON (r.SourceDeliverableId=f.Id OR r.TargetDeliverableId=f.Id) JOIN Deliverables other ON other.Id=CASE WHEN r.SourceDeliverableId=f.Id THEN r.TargetDeliverableId ELSE r.SourceDeliverableId END JOIN DeliverableTypes ot ON ot.Id=other.DeliverableTypeId WHERE f.LifecycleStatus='ACTIVE' AND ft.TypeCode='FR' AND ot.TypeCode='TC' AND r.RelationType='VERIFIES'",cancellationToken);
+        var prdScope = PermissionService.BuildDataScopePredicate("d", PermissionCatalog.AnalyticsView);
+        var frScope = PermissionService.BuildDataScopePredicate("d", PermissionCatalog.AnalyticsView);
+        var prdTotal=await ScalarAsync(connection,$"SELECT COUNT(*) FROM Deliverables d JOIN DeliverableTypes t ON t.Id=d.DeliverableTypeId WHERE d.LifecycleStatus='ACTIVE' AND t.TypeCode='PRD' AND {prdScope}",userId,cancellationToken);
+        var prdLinked=await ScalarAsync(connection,$"SELECT COUNT(DISTINCT d.Id) FROM Deliverables d JOIN DeliverableTypes pt ON pt.Id=d.DeliverableTypeId JOIN DeliverableRelations r ON r.SourceDeliverableId=d.Id JOIN Deliverables f ON f.Id=r.TargetDeliverableId JOIN DeliverableTypes ft ON ft.Id=f.DeliverableTypeId WHERE d.LifecycleStatus='ACTIVE' AND pt.TypeCode='PRD' AND ft.TypeCode='FR' AND r.RelationType='DERIVES' AND {prdScope}",userId,cancellationToken);
+        var frTotal=await ScalarAsync(connection,$"SELECT COUNT(*) FROM Deliverables d JOIN DeliverableTypes t ON t.Id=d.DeliverableTypeId WHERE d.LifecycleStatus='ACTIVE' AND t.TypeCode='FR' AND {frScope}",userId,cancellationToken);
+        var frLinked=await ScalarAsync(connection,$"SELECT COUNT(DISTINCT d.Id) FROM Deliverables d JOIN DeliverableTypes ft ON ft.Id=d.DeliverableTypeId JOIN DeliverableRelations r ON (r.SourceDeliverableId=d.Id OR r.TargetDeliverableId=d.Id) JOIN Deliverables other ON other.Id=CASE WHEN r.SourceDeliverableId=d.Id THEN r.TargetDeliverableId ELSE r.SourceDeliverableId END JOIN DeliverableTypes ot ON ot.Id=other.DeliverableTypeId WHERE d.LifecycleStatus='ACTIVE' AND ft.TypeCode='FR' AND ot.TypeCode='TC' AND r.RelationType='VERIFIES' AND {frScope}",userId,cancellationToken);
 
         var expectedHardware=new List<(int Id,string Name)>();
         await using(var ec=connection.CreateCommand())
         {
-            ec.CommandText="SELECT c.Id,c.CategoryName FROM DeliverableCategories c JOIN DeliverableTypes t ON t.Id=c.DeliverableTypeId WHERE c.IsEnabled=1 AND t.TypeCode='SWP' ORDER BY c.SortOrder,c.CategoryName";
+            var typeLookupScope=PermissionService.BuildReferenceScopePredicate(DataScopeCatalog.Type,"t.Id",PermissionCatalog.AnalyticsView);
+            ec.CommandText=$"SELECT c.Id,c.CategoryName FROM DeliverableCategories c JOIN DeliverableTypes t ON t.Id=c.DeliverableTypeId WHERE c.IsEnabled=1 AND t.TypeCode='SWP' AND {typeLookupScope} ORDER BY c.SortOrder,c.CategoryName";
+            ec.Parameters.AddWithValue("$scopeUserId",userId);
             await using var er=await ec.ExecuteReaderAsync(cancellationToken);while(await er.ReadAsync(cancellationToken))expectedHardware.Add((er.GetInt32(0),er.GetString(1)));
         }
         var hardwareCoverage=new List<object>();
         await using(var projects=connection.CreateCommand())
         {
-            projects.CommandText="SELECT Id,ProjectCode,ProjectName FROM Projects WHERE IsEnabled=1 ORDER BY ProjectCode";
+            var projectLookupScope=PermissionService.BuildReferenceScopePredicate(DataScopeCatalog.Project,"p.Id",PermissionCatalog.AnalyticsView);
+            projects.CommandText=$"SELECT p.Id,p.ProjectCode,p.ProjectName FROM Projects p WHERE p.IsEnabled=1 AND {projectLookupScope} ORDER BY p.ProjectCode";
+            projects.Parameters.AddWithValue("$scopeUserId",userId);
             await using var reader=await projects.ExecuteReaderAsync(cancellationToken);var projectList=new List<(int Id,string Code,string Name)>();while(await reader.ReadAsync(cancellationToken))projectList.Add((reader.GetInt32(0),reader.GetString(1),reader.GetString(2)));await reader.DisposeAsync();
             foreach(var project in projectList)
             {
-                await using var categories=connection.CreateCommand();categories.CommandText="SELECT DISTINCT cat.Id,cat.CategoryName FROM Deliverables d JOIN DeliverableTypes t ON t.Id=d.DeliverableTypeId JOIN DeliverableCategories cat ON cat.Id=d.CategoryId JOIN DeliverableVersions v ON v.Id=d.CurrentVersionId WHERE d.ProjectId=$projectId AND d.LifecycleStatus='ACTIVE' AND t.TypeCode='SWP' AND v.VersionStatus='RELEASED'";categories.Parameters.AddValue("$projectId",project.Id);
+                await using var categories=connection.CreateCommand();var hardwareScope=PermissionService.BuildDataScopePredicate("d",PermissionCatalog.AnalyticsView);categories.CommandText=$"SELECT DISTINCT cat.Id,cat.CategoryName FROM Deliverables d JOIN DeliverableTypes t ON t.Id=d.DeliverableTypeId JOIN DeliverableCategories cat ON cat.Id=d.CategoryId JOIN DeliverableVersions v ON v.Id=d.CurrentVersionId WHERE d.ProjectId=$projectId AND d.LifecycleStatus='ACTIVE' AND t.TypeCode='SWP' AND v.VersionStatus='RELEASED' AND {hardwareScope}";categories.Parameters.AddValue("$projectId",project.Id);categories.Parameters.AddValue("$scopeUserId",userId);
                 var actualIds=new HashSet<int>();var actualNames=new List<string>();await using var cr=await categories.ExecuteReaderAsync(cancellationToken);while(await cr.ReadAsync(cancellationToken)){actualIds.Add(cr.GetInt32(0));actualNames.Add(cr.GetString(1));}
                 hardwareCoverage.Add(new{projectId=project.Id,projectCode=project.Code,projectName=project.Name,covered=actualIds.Count,expected=expectedHardware.Count,percent=Percent(actualIds.Count,expectedHardware.Count),actual=actualNames,missing=expectedHardware.Where(x=>!actualIds.Contains(x.Id)).Select(x=>x.Name).ToArray()});
             }
         }
 
-        var pendingReview=await ScalarAsync(connection,"SELECT COUNT(*) FROM DeliverableVersions WHERE VersionStatus='IN_REVIEW'",cancellationToken);var pendingChanges=await ScalarAsync(connection,"SELECT COUNT(*) FROM ChangeRecords WHERE ChangeStatus NOT IN ('CLOSED','REJECTED')",cancellationToken);var missingCurrent=rows.Count(x=>x.MissingFields.Contains("当前版本"));var stale=rows.Count(x=>DateTime.TryParse(x.UpdatedAt,out var d)&&d<DateTime.UtcNow.AddDays(-90));
+        var pendingReview=await ScalarAsync(connection,$"SELECT COUNT(*) FROM DeliverableVersions v JOIN Deliverables d ON d.Id=v.DeliverableId WHERE v.VersionStatus='IN_REVIEW' AND {scope}",userId,cancellationToken);
+        var pendingChanges=await ScalarAsync(connection,$"SELECT COUNT(*) FROM ChangeRecords c JOIN Deliverables d ON d.Id=c.DeliverableId WHERE c.ChangeStatus NOT IN ('CLOSED','REJECTED') AND {scope}",userId,cancellationToken);
+        var missingCurrent=rows.Count(x=>x.MissingFields.Contains("当前版本"));var stale=rows.Count(x=>DateTime.TryParse(x.UpdatedAt,out var d)&&d<DateTime.UtcNow.AddDays(-90));
         var issueRows=rows.Where(x=>x.MissingFields.Length>0||(DateTime.TryParse(x.UpdatedAt,out var d)&&d<DateTime.UtcNow.AddDays(-90))).Select(x=>new{x.Id,x.Code,x.Name,x.Department,x.Type,x.Category,x.Project,percent=Percent(x.CompletedChecks,x.TotalChecks),missing=x.MissingFields,x.UpdatedAt}).OrderBy(x=>x.percent).ThenBy(x=>x.Code).Take(100).ToArray();
         return Ok(new{summary=new{deliverables=rows.Count,metadataPercent,completeDeliverables=rows.Count(x=>x.MissingFields.Length==0),prdTracePercent=Percent(prdLinked,prdTotal),frTestTracePercent=Percent(frLinked,frTotal),pendingReview,pendingChanges,missingCurrent,stale},departmentCompleteness,traceability=new{prdToFr=new{total=prdTotal,linked=prdLinked,percent=Percent(prdLinked,prdTotal)},frToTestCase=new{total=frTotal,linked=frLinked,percent=Percent(frLinked,frTotal)}},hardwareCoverage,hardwareCategoryCount=expectedHardware.Count,issues=issueRows});
     }
 
     private static bool Has(Microsoft.Data.Sqlite.SqliteDataReader reader,int ordinal)=>!reader.IsDBNull(ordinal)&&!string.IsNullOrWhiteSpace(Convert.ToString(reader.GetValue(ordinal)));
     private static int Percent(int complete,int total)=>total<=0?100:(int)Math.Round(complete*100d/total);
-    private static async Task<int> ScalarAsync(Microsoft.Data.Sqlite.SqliteConnection connection,string sql,CancellationToken cancellationToken){await using var command=connection.CreateCommand();command.CommandText=sql;return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));}
+    private static async Task<int> ScalarAsync(Microsoft.Data.Sqlite.SqliteConnection connection,string sql,int userId,CancellationToken cancellationToken){await using var command=connection.CreateCommand();command.CommandText=sql;command.Parameters.AddWithValue("$scopeUserId",userId);return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));}
     private sealed record CompletionItem(int Id,string Code,string Name,string Department,string TypeCode,string Type,string Category,string Project,int CompletedChecks,int TotalChecks,string[] MissingFields,string UpdatedAt,string? VersionStatus);
 }

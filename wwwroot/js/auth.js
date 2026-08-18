@@ -50,6 +50,7 @@ function showLoginScreen(errorMessage = '') {
 function completeLogin(status) {
   state.auth = status;
   state.master = null;
+  state.masterPermission = null;
   authRoot.replaceChildren();
   appShell.classList.remove('hidden');
   applyRoleUi();
@@ -62,7 +63,7 @@ function completeLogin(status) {
 
 async function logout() {
   try { await api('/internal/auth/logout', { method: 'POST' }); } catch { /* session may already be invalid */ }
-  state.auth = null; state.master = null; showLoginScreen('已退出登录。');
+  state.auth = null; state.master = null; state.masterPermission = null; showLoginScreen('已退出登录。');
 }
 
 function openChangePassword(forced = false) {
@@ -75,6 +76,6 @@ function openChangePassword(forced = false) {
     const form = byId('password-form'); if (!form.reportValidity()) throw new Error('请完整填写密码。');
     const f = new FormData(form); if (f.get('newPassword') !== f.get('confirmPassword')) throw new Error('两次输入的新密码不一致。');
     const result = await api('/internal/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword: f.get('currentPassword'), newPassword: f.get('newPassword') }) });
-    modalRoot.replaceChildren(); state.auth = null; showLoginScreen(result.message);
+    modalRoot.replaceChildren(); state.auth = null; state.master = null; state.masterPermission = null; showLoginScreen(result.message);
   }});
 }
