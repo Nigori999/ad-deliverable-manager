@@ -23,6 +23,30 @@ public sealed class RolesController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct) => Ok(new { items = await _roles.ListRolesAsync(ct), permissions = await _roles.ListPermissionsAsync(ct) });
 
+    [HttpGet("{id:int}/users")]
+    public async Task<IActionResult> Users(int id,CancellationToken ct)
+    {
+        await using var connection=await _database.OpenConnectionAsync(ct);
+        await using var role=connection.CreateCommand();
+        role.CommandText="SELECT Name,Code FROM Roles WHERE Id=$id";
+        role.Parameters.AddWithValue("$id",id);
+        await using var roleReader=await role.ExecuteReaderAsync(ct);
+        if(!await roleReader.ReadAsync(ct))return NotFound(new{message="角色不存在。"});
+        var roleName=roleReader.GetString(0);var roleCode=roleReader.GetString(1);await roleReader.DisposeAsync();
+        await using var command=connection.CreateCommand();
+        command.CommandText="""
+            SELECT u.Id,u.Username,u.DisplayName,u.IsEnabled,u.LastLoginAt
+            FROM UserRoles ur JOIN Users u ON u.Id=ur.UserId
+            WHERE ur.RoleId=$id
+            ORDER BY u.IsEnabled DESC,u.DisplayName,u.Username;
+            """;
+        command.Parameters.AddWithValue("$id",id);
+        var items=new List<object>();
+        await using var reader=await command.ExecuteReaderAsync(ct);
+        while(await reader.ReadAsync(ct))items.Add(new{id=reader.GetInt32(0),username=reader.GetString(1),displayName=reader.GetString(2),isEnabled=reader.GetInt32(3)==1,lastLoginAt=reader.IsDBNull(4)?null:reader.GetString(4)});
+        return Ok(new{role=new{id,name=roleName,code=roleCode},items});
+    }
+
     [HttpGet("data-scope-schema")]
     public async Task<IActionResult> DataScopeSchema(CancellationToken ct)
     {

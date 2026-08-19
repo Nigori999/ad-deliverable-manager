@@ -1,5 +1,6 @@
 const state = {
   master: null,
+  masterPermission: null,
   auth: null,
   route: 'dashboard',
   deliverablePage: 1,
@@ -123,7 +124,16 @@ function optionList(items, selected = '', emptyLabel = '全部') {
   return `<option value="">${esc(emptyLabel)}</option>` + items.map(x => `<option value="${x.id}" ${String(x.id) === String(selected) ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
 }
 
-async function loadMaster() { state.master = await api('/internal/master-data'); }
+async function loadMaster(permissionCode = 'MASTERDATA_VIEW') {
+  const normalized = String(permissionCode || 'MASTERDATA_VIEW').toUpperCase();
+  if (state.master && state.masterPermission === normalized) return state.master;
+  const url = normalized === 'MASTERDATA_VIEW'
+    ? '/internal/master-data'
+    : `/internal/reference-data?permission=${encodeURIComponent(normalized)}`;
+  state.master = await api(url);
+  state.masterPermission = normalized;
+  return state.master;
+}
 
 async function downloadCsv(url, payload, filePrefix) {
   const response = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });

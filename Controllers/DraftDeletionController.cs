@@ -24,9 +24,8 @@ public sealed class DraftDeletionController : ControllerBase
         state.CommandText = """
             SELECT d.DeliverableCode,
                    (SELECT COUNT(*) FROM DeliverableVersions v WHERE v.DeliverableId=d.Id),
-                   (SELECT COUNT(*) FROM DeliverableVersions v WHERE v.DeliverableId=d.Id AND v.VersionStatus<>'DRAFT'),
+                   (SELECT COUNT(*) FROM DeliverableVersions v WHERE v.DeliverableId=d.Id AND v.VersionStatus NOT IN ('DRAFT','DEPRECATED')),
                    (SELECT COUNT(*) FROM ChangeRecords c WHERE c.DeliverableId=d.Id),
-                   (SELECT COUNT(*) FROM LifecycleRecords l WHERE l.DeliverableId=d.Id),
                    (SELECT COUNT(*) FROM DeliverableRelations r WHERE r.SourceDeliverableId=d.Id OR r.TargetDeliverableId=d.Id),
                    (SELECT COUNT(*) FROM ProductBaselineHardware h JOIN DeliverableVersions v ON v.Id=h.SoftwareVersionId WHERE v.DeliverableId=d.Id)
                    + (SELECT COUNT(*) FROM ProductBaselineDeliverables b JOIN DeliverableVersions v ON v.Id=b.VersionId WHERE v.DeliverableId=d.Id)
@@ -37,18 +36,24 @@ public sealed class DraftDeletionController : ControllerBase
         if (!await reader.ReadAsync(ct)) return NotFound(new { message = "交付物不存在。" });
         var code = reader.GetString(0);
         var versionCount = Convert.ToInt32(reader.GetInt64(1));
-        var nonDraftVersions = Convert.ToInt32(reader.GetInt64(2));
+        var protectedVersions = Convert.ToInt32(reader.GetInt64(2));
         var changes = Convert.ToInt32(reader.GetInt64(3));
-        var lifecycle = Convert.ToInt32(reader.GetInt64(4));
-        var relations = Convert.ToInt32(reader.GetInt64(5));
-        var baselineRefs = Convert.ToInt32(reader.GetInt64(6));
+        var relations = Convert.ToInt32(reader.GetInt64(4));
+        var baselineRefs = Convert.ToInt32(reader.GetInt64(5));
         await reader.CloseAsync();
 
-        if (versionCount == 0 || nonDraftVersions > 0)
-            return Conflict(new { message = "仅允许删除所有版本均处于草稿状态的交付物。" });
-        if (changes > 0 || lifecycle > 0 || relations > 0 || baselineRefs > 0)
-            return Conflict(new { message = "该交付物已经产生变更、流程、关联或基线引用，不能直接删除。" });
+        if (protectedVersions > 0)
+            return Conflict(new { message = "该交付物仍存在审批中、已审批通过、已发布或已替代版本，不能删除。仅无版本、草稿版本或已作废版本可以清理。" });
+        if (changes > 0 || relations > 0 || baselineRefs > 0)
+            return Conflict(new { message = "该交付物仍存在变更、关联关系或产品基线引用，不能删除。" });
 
+        await using (var lifecycleDelete = connection.CreateCommand())
+        {
+            lifecycleDelete.Transaction = transaction;
+            lifecycleDelete.CommandText = "DELETE FROM LifecycleRecords WHERE DeliverableId=$id";
+            lifecycleDelete.Parameters.AddWithValue("$id", id);
+            await lifecycleDelete.ExecuteNonQueryAsync(ct);
+        }
         await using (var unlink = connection.CreateCommand())
         {
             unlink.Transaction = transaction;
@@ -63,9 +68,9 @@ public sealed class DraftDeletionController : ControllerBase
             delete.Parameters.AddWithValue("$id", id);
             await delete.ExecuteNonQueryAsync(ct);
         }
-        await InsertAuditAsync(connection, transaction, "Deliverable", id, "DELETE_DRAFT", User.GetDisplayName(), $"删除草稿交付物 {code}", ct);
+        await InsertAuditAsync(connection, transaction, "Deliverable", id, "DELETE", User.GetDisplayName(), $"删除交付物 {code}（包含 {versionCount} 个草稿/已作废版本）", ct);
         await transaction.CommitAsync(ct);
-        return Ok(new { message = "草稿交付物已删除。" });
+        return Ok(new { message = "交付物已删除。" });
     }
 
     [HttpDelete("product-baselines/{id:int}")]

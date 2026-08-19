@@ -27,6 +27,21 @@ public sealed class PermissionService
               )
         )";
     }
+    public static string BuildReferenceScopePredicate(string dimension,string valueExpression,string permissionCode)
+    {
+        var safeDimension=(dimension??"").Trim().ToUpperInvariant().Replace("'","''");
+        var safePermission=(permissionCode??"").Trim().ToUpperInvariant().Replace("'","''");
+        if(safeDimension is not (DataScopeCatalog.Department or DataScopeCatalog.Project or DataScopeCatalog.Type))throw new ArgumentException("不支持的数据范围维度。",nameof(dimension));
+        return $@"EXISTS (
+            SELECT 1 FROM UserRoles ur JOIN Roles r ON r.Id=ur.RoleId AND r.IsEnabled=1
+            JOIN RolePermissions rp ON rp.RoleId=r.Id
+            JOIN Permissions p ON p.Id=rp.PermissionId AND p.IsEnabled=1 AND p.Code='{safePermission}'
+            WHERE ur.UserId=$scopeUserId
+              AND EXISTS (SELECT 1 FROM RoleDataScopes s0 WHERE s0.RoleId=r.Id)
+              AND (NOT EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='{safeDimension}')
+                   OR EXISTS (SELECT 1 FROM RoleDataScopes s WHERE s.RoleId=r.Id AND s.Dimension='{safeDimension}' AND (s.ScopeType='ALL' OR (s.ScopeType='INCLUDE' AND s.ScopeValue=CAST({valueExpression} AS TEXT)))))
+        )";
+    }
     private static async Task<bool> RoleHasPermissionAsync(SqliteConnection c,int roleId,string permissionCode,CancellationToken ct){await using var cmd=c.CreateCommand();cmd.CommandText="SELECT COUNT(*) FROM RolePermissions rp JOIN Permissions p ON p.Id=rp.PermissionId WHERE rp.RoleId=$role AND p.Code=$code AND p.IsEnabled=1";cmd.Parameters.AddWithValue("$role",roleId);cmd.Parameters.AddWithValue("$code",permissionCode);return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct))>0;}
     private static async Task<List<int>> GetRoleIdsAsync(SqliteConnection c,int userId,CancellationToken ct){await using var cmd=c.CreateCommand();cmd.CommandText="SELECT r.Id FROM UserRoles ur JOIN Roles r ON r.Id=ur.RoleId WHERE ur.UserId=$id AND r.IsEnabled=1";cmd.Parameters.AddWithValue("$id",userId);var ids=new List<int>();await using var reader=await cmd.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))ids.Add(reader.GetInt32(0));return ids;}
     private static async Task<bool> MatchesDataScopeAsync(SqliteConnection c,int roleId,int deliverableId,CancellationToken ct){await using var cmd=c.CreateCommand();cmd.CommandText="SELECT DepartmentId,ProjectId,DeliverableTypeId FROM Deliverables WHERE Id=$id";cmd.Parameters.AddWithValue("$id",deliverableId);int departmentId,projectId,typeId;await using(var reader=await cmd.ExecuteReaderAsync(ct)){if(!await reader.ReadAsync(ct))return false;departmentId=reader.GetInt32(0);projectId=reader.GetInt32(1);typeId=reader.GetInt32(2);}return await MatchesDataScopeAsync(c,roleId,departmentId,projectId,typeId,ct);}

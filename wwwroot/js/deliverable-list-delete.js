@@ -1,3 +1,10 @@
+function deliverableServerLink(path) {
+  const value = String(path || '').trim();
+  return /^(https?:\/\/|file:\/\/)/i.test(value)
+    ? `<a class="btn btn-light btn-sm" href="${esc(value)}" target="_blank" rel="noopener noreferrer">打开文件</a>`
+    : '';
+}
+
 loadDeliverables = async function() {
   const form = byId('deliverable-filters');
   const params = new URLSearchParams(new FormData(form));
@@ -6,20 +13,30 @@ loadDeliverables = async function() {
   params.set('page', state.deliverablePage); params.set('pageSize', state.deliverablePageSize);
   const data = await api(`/internal/deliverables?${params}`);
   byId('deliverable-total').textContent = `共 ${data.total} 项`;
-  byId('deliverable-list').innerHTML = data.items.length ? `<table><thead><tr><th>${titleWithTip('交付物编码', deliverableCodeRule)}</th><th>统一名称</th><th>类型 / 类别</th><th>项目</th><th>当前版本</th><th>状态</th><th>责任人</th><th>私密/分享</th><th>最近更新</th><th>操作</th></tr></thead><tbody>${data.items.map(x => `<tr><td class="code">${esc(x.code)}</td><td><strong>${esc(x.name)}</strong><div class="muted">对象：${esc(x.objectCode)}</div></td><td>${esc(x.type)}<div class="muted">${esc(x.category)}</div></td><td>${esc(x.project)}</td><td>${esc(x.currentVersion || '—')}</td><td>${statusBadge(x.versionStatus || 'DRAFT')}</td><td>${esc(x.responsiblePerson)}</td><td>${esc(confidentialityNames[x.confidentiality] || x.confidentiality)}<div class="muted">${esc(shareNames[x.sharePolicy] || x.sharePolicy)}</div></td><td>${esc(fmtDate(x.updatedAt))}</td><td><div class="inline-actions"><a class="btn btn-light btn-sm" href="#/deliverables/${x.id}">详情</a><button type="button" class="btn btn-light btn-sm view-change-timeline" data-id="${x.id}">变更记录</button>${x.serverPath ? `<button type="button" class="btn btn-light btn-sm copy-path" data-path="${esc(x.serverPath)}">复制路径</button>` : ''}${x.canDeleteDraft && hasPermission('DELIVERY_EDIT') ? `<button type="button" class="btn btn-danger btn-sm delete-deliverable-draft" data-id="${x.id}">删除</button>` : ''}</div></td></tr>`).join('')}</tbody></table>` : '<div class="empty">没有符合条件的交付物</div>';
+  byId('deliverable-list').innerHTML = data.items.length ? `<table><thead><tr><th>${titleWithTip('交付物编码', deliverableCodeRule)}</th><th>统一名称</th><th>类型 / 类别</th><th>项目</th><th>当前版本</th><th>状态</th><th>责任人</th><th>私密/分享</th><th>最近更新</th><th>操作</th></tr></thead><tbody>${data.items.map(x => `<tr><td class="code">${esc(x.code)}</td><td><strong>${esc(x.name)}</strong></td><td>${esc(x.type)}<div class="muted">${esc(x.category)} · ${esc(x.categoryCode)}</div></td><td>${esc(x.project)}</td><td>${esc(x.currentVersion || '—')}</td><td>${statusBadge(x.versionStatus || 'DRAFT')}</td><td>${esc(x.responsiblePerson)}</td><td>${esc(confidentialityNames[x.confidentiality] || x.confidentiality)}<div class="muted">${esc(shareNames[x.sharePolicy] || x.sharePolicy)}</div></td><td>${esc(fmtDate(x.updatedAt))}</td><td><div class="inline-actions"><a class="btn btn-light btn-sm" href="#/deliverables/${x.id}">详情</a>${x.canEditDraft && hasPermission('DELIVERY_EDIT') ? `<button type="button" class="btn btn-light btn-sm edit-deliverable-draft" data-id="${x.id}" data-permission="DELIVERY_EDIT">编辑</button>` : ''}<button type="button" class="btn btn-light btn-sm view-change-timeline" data-id="${x.id}">变更记录</button>${x.serverPath ? `${deliverableServerLink(x.serverPath)}<button type="button" class="btn btn-light btn-sm copy-path" data-path="${esc(x.serverPath)}">复制路径</button>` : ''}${x.canDelete && hasPermission('DELIVERY_DELETE') ? `<button type="button" class="btn btn-danger btn-sm delete-deliverable" data-id="${x.id}" data-permission="DELIVERY_DELETE">删除</button>` : ''}</div></td></tr>`).join('')}</tbody></table>` : '<div class="empty">没有符合条件的交付物</div>';
   document.querySelectorAll('.copy-path').forEach(btn => btn.onclick = () => copyText(btn.dataset.path));
   document.querySelectorAll('.view-change-timeline').forEach(btn => btn.onclick = () => openChangeTimelineDrawer(data.items.find(x => x.id === Number(btn.dataset.id))));
-  document.querySelectorAll('.delete-deliverable-draft').forEach(btn => btn.onclick = async () => {
-    const item = data.items.find(x => x.id === Number(btn.dataset.id));
-    if (!item) return;
-    const result = await confirmAction('删除草稿交付物', `确认永久删除“${item.name}”及其全部草稿版本吗？此操作不可恢复。`, { submitText: '确认删除', danger: true });
-    if (!result.confirmed) return;
-    btn.disabled = true;
-    try { await api(`/internal/draft-deletions/deliverables/${item.id}`, { method: 'DELETE' }); toast('草稿交付物已删除'); await loadDeliverables(); }
+  document.querySelectorAll('.edit-deliverable-draft').forEach(btn => btn.onclick = () => openDeliverableDraftEdit(Number(btn.dataset.id)));
+  document.querySelectorAll('.delete-deliverable').forEach(btn => btn.onclick = async () => {
+    const item = data.items.find(x => x.id === Number(btn.dataset.id)); if (!item) return;
+    const result = await confirmAction('删除交付物', `确认永久删除“${item.name}”吗？仅草稿和已作废版本会随交付物一起清理，此操作不可恢复。`, { submitText: '确认删除', danger: true });
+    if (!result.confirmed) return; btn.disabled = true;
+    try { await api(`/internal/draft-deletions/deliverables/${item.id}`, { method: 'DELETE' }); toast('交付物已删除'); await loadDeliverables(); }
     catch (error) { btn.disabled = false; toast(error.message, 'error'); }
   });
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
   byId('deliverable-pagination').innerHTML = `<div class="pagination"><button type="button" class="btn btn-light btn-sm" id="prev-page" ${data.page <= 1 ? 'disabled' : ''}>上一页</button><span>第 ${data.page} / ${totalPages} 页</span><button type="button" class="btn btn-light btn-sm" id="next-page" ${data.page >= totalPages ? 'disabled' : ''}>下一页</button></div>`;
-  byId('prev-page').onclick = () => { state.deliverablePage--; loadDeliverables(); };
-  byId('next-page').onclick = () => { state.deliverablePage++; loadDeliverables(); };
+  byId('prev-page').onclick = () => { state.deliverablePage--; loadDeliverables(); }; byId('next-page').onclick = () => { state.deliverablePage++; loadDeliverables(); };
 };
+
+async function openDeliverableDraftEdit(id) {
+  if (!hasPermission('DELIVERY_EDIT')) return toast('当前角色没有编辑草稿交付物的权限。', 'error');
+  const data = await api(`/internal/deliverables/${id}`), d = data.deliverable;
+  if (!(data.versions || []).length || (data.versions || []).some(v => v.status !== 'DRAFT')) return toast('交付物已经进入审批或正式流程，不能直接编辑。', 'error');
+  const body = `<form id="deliverable-edit-form"><div class="alert">草稿阶段可修正描述类主档信息。部门、类型、项目和类别共同参与唯一编码生成，创建后不能在普通编辑中修改。</div><div class="form-grid"><div class="field"><label>交付物编码</label><input value="${esc(d.code)}" disabled></div><div class="field"><label>交付物类型</label><input value="${esc(d.type)}" disabled></div><div class="field"><label>交付物类别</label><input value="${esc(d.category)}（${esc(d.categoryCode)}）" disabled><input type="hidden" name="categoryId" value="${d.categoryId}"></div><div class="field"><label>项目/车型</label><input value="${esc(d.project)}" disabled></div><div class="field span-2"><label>统一名称 *</label><input name="unifiedName" value="${esc(d.name)}" required></div><div class="field"><label>业务/功能模块</label><input name="businessModule" value="${esc(d.businessModule || '')}"></div><div class="field"><label>责任人 *</label><input name="responsiblePerson" value="${esc(d.responsiblePerson)}" required></div><div class="field"><label>私密等级 *</label><select name="confidentialityLevel">${state.master.confidentialityLevels.map(x=>`<option value="${x.code}" ${x.code===d.confidentiality?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div><div class="field"><label>对外分享策略 *</label><select name="sharePolicy">${state.master.sharePolicies.map(x=>`<option value="${x.code}" ${x.code===d.sharePolicy?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div><div class="field span-2"><label>交付物说明</label><textarea name="description">${esc(d.description || '')}</textarea></div></div></form>`;
+  showModal('编辑草稿交付物', body, { submitText: '保存修改', onSubmit: async close => {
+    const form = byId('deliverable-edit-form'); if (!form.reportValidity()) throw new Error('请补全必填信息。'); const f = new FormData(form);
+    await api(`/internal/deliverables/${id}`, { method: 'PUT', body: JSON.stringify({ categoryId:Number(f.get('categoryId')), unifiedName:f.get('unifiedName'), businessModule:f.get('businessModule'), responsiblePerson:f.get('responsiblePerson'), confidentialityLevel:f.get('confidentialityLevel'), sharePolicy:f.get('sharePolicy'), description:f.get('description'), revision:d.revision }) });
+    close(); toast('草稿交付物已更新'); await loadDeliverables();
+  }});
+}
