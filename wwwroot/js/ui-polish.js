@@ -1,4 +1,4 @@
-/* Focused UX improvements for version details, dashboard and completeness analysis. */
+/* Focused UX improvements for version details and dashboard. */
 
 function uxMetricCard(label, value, note, tone = '', href = '') {
   const tag = href ? 'a' : 'div';
@@ -40,33 +40,6 @@ renderDashboard = async function () {
     drawLineChart(byId('trend-chart'), data.monthlyTrend);
     drawBarChart(byId('type-chart'), data.typeDistribution);
   });
-};
-
-renderAnalytics = async function () {
-  setPage('完整度分析', '识别元数据缺失、追溯断点、硬件覆盖和待处理事项');
-  const data = await api('/internal/analytics/completeness');
-  const s = data.summary;
-  const hardwareExpected = data.hardwareCoverage.length ? Math.max(...data.hardwareCoverage.map(x => Number(x.expected || 0))) : 0;
-  const issueCount = data.issues.length;
-  content.innerHTML = `
-    <section class="ux-page-intro">
-      <div><strong>数据质量体检</strong><span>从元数据、需求追溯、软件包覆盖和时效性四个维度定位治理缺口</span></div>
-      <div class="ux-quick-actions"><a class="btn btn-light btn-sm" href="#/deliverables">回到台账整改</a></div>
-    </section>
-    <section class="ux-metric-grid analytics-stats">
-      ${uxMetricCard('元数据完整度', `${s.metadataPercent}%`, `${s.completeDeliverables}/${s.deliverables} 项完全完整`, s.metadataPercent >= 90 ? 'success' : 'warning')}
-      ${uxMetricCard('PRD → FR 追溯', `${s.prdTracePercent}%`, '已建立派生关系', s.prdTracePercent >= 90 ? 'success' : 'warning')}
-      ${uxMetricCard('FR → 测试用例', `${s.frTestTracePercent}%`, '已建立验证关系', s.frTestTracePercent >= 90 ? 'success' : 'warning')}
-      ${uxMetricCard('待审批版本', `${s.pendingReview} 个`, '需要审批者处理', s.pendingReview ? 'warning' : 'success')}
-      ${uxMetricCard('未关闭变更', `${s.pendingChanges} 项`, '待评估 / 实施 / 验证', s.pendingChanges ? 'warning' : 'success', '#/changes')}
-      ${uxMetricCard('超 90 天未更新', `${s.stale} 项`, '建议确认数据是否仍有效', s.stale ? 'danger-tone' : 'success')}
-    </section>
-    <section class="ux-dashboard-grid">
-      <article class="card"><div class="card-head"><div><h3>部门元数据完整度</h3><p class="ux-section-note">按部门查看交付物必填信息完成情况</p></div></div><div class="card-body progress-list ux-progress-list">${data.departmentCompleteness.map(x => progressRow(x.name, x.percent, `${x.complete}/${x.total} 项完全完整`)).join('') || '<div class="empty">暂无数据</div>'}</div></article>
-      <article class="card"><div class="card-head"><div><h3>需求追溯完整度</h3><p class="ux-section-note">检查需求从产品到功能再到测试的链路完整性</p></div></div><div class="card-body progress-list ux-progress-list">${progressRow('PRD → FR', data.traceability.prdToFr.percent, `${data.traceability.prdToFr.linked}/${data.traceability.prdToFr.total} 个 PRD 已关联 FR`)}${progressRow('FR → 测试用例', data.traceability.frToTestCase.percent, `${data.traceability.frToTestCase.linked}/${data.traceability.frToTestCase.total} 个 FR 已关联测试用例`)}</div></article>
-    </section>
-    <section class="card ux-full-card"><div class="card-head"><div><h3>项目硬件软件包覆盖</h3><p class="ux-section-note">覆盖标准实时取自“基础设置 → 交付物类别”中启用的硬件软件包类别${hardwareExpected ? `，当前共 ${hardwareExpected} 类` : ''}</p></div></div><div class="table-wrap ux-table-wrap">${data.hardwareCoverage.length ? `<table><thead><tr><th>项目</th><th>覆盖率</th><th>覆盖情况</th><th>缺失类别</th></tr></thead><tbody>${data.hardwareCoverage.map(x => `<tr><td><strong>${esc(x.projectName)}</strong><div class="muted">${esc(x.projectCode)}</div></td><td><div class="ux-percent-cell"><strong>${x.percent}%</strong><div class="compact-progress"><span style="width:${x.percent}%"></span></div></div></td><td><strong>${esc(x.covered)} / ${esc(x.expected)}</strong><div class="muted">已配置正式软件包类别</div></td><td class="tag-list">${x.missing.length ? x.missing.map(v => `<span class="badge deprecated">${esc(v)}</span>`).join(' ') : '<span class="badge released">已完整覆盖</span>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">暂无项目数据</div>'}</div></section>
-    <section class="card"><div class="card-head"><div><h3>待整改数据</h3><p class="ux-section-note">存在字段缺失或长期未更新的交付物，最多显示 100 项</p></div><span class="ux-count-badge">${issueCount} 项</span></div><div class="table-wrap ux-table-wrap">${issueCount ? `<table><thead><tr><th>交付物</th><th>部门 / 类型</th><th>项目</th><th>完整度</th><th>待补充字段</th><th>最近更新</th><th>操作</th></tr></thead><tbody>${data.issues.map(x => `<tr><td><strong>${esc(x.name)}</strong><div class="code">${esc(x.code)}</div></td><td>${esc(x.department)}<div class="muted">${esc(x.type)}</div></td><td>${esc(x.project)}</td><td><div class="ux-score ${x.percent >= 90 ? 'good' : x.percent >= 70 ? 'mid' : 'low'}">${x.percent}%</div></td><td class="tag-list">${x.missing.map(v => `<span class="badge pending_assessment">${esc(v)}</span>`).join(' ') || '<span class="badge released">完整</span>'}</td><td>${esc(fmtDate(x.updatedAt))}</td><td><a class="btn btn-light btn-sm" href="#/deliverables/${x.id}">去完善</a></td></tr>`).join('')}</tbody></table>` : '<div class="ux-empty-success"><strong>当前没有发现数据问题</strong><span>元数据、时效性与当前检查规则均未发现待整改项。</span></div>'}</div></section>`;
 };
 
 openVersionDetails = async function (versionId) {

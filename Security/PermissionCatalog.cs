@@ -22,6 +22,7 @@ public static class PermissionCatalog
 
     public const string RelationView = "RELATION_VIEW";
     public const string RelationCreate = "RELATION_CREATE";
+    public const string RelationEdit = "RELATION_EDIT";
     public const string RelationDelete = "RELATION_DELETE";
 
     public const string ChangeView = "CHANGE_VIEW";
@@ -83,6 +84,7 @@ public static class PermissionCatalog
         (VersionDeprecate, "废止版本", "交付物台账"),
         (RelationView, "查看关联关系", "交付物台账"),
         (RelationCreate, "建立关联关系", "交付物台账"),
+        (RelationEdit, "编辑关联关系", "交付物台账"),
         (RelationDelete, "删除关联关系", "交付物台账"),
         (BaselineView, "查看产品基线", "产品基线"),
         (BaselineCreate, "新增产品基线", "产品基线"),
