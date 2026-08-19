@@ -66,7 +66,7 @@ async function renderDeliverableDetail(id) {
       <div class="inline-actions">${actionButtons.join('')}</div></div>
     <div class="alert baseline-policy-alert ${hasFormalBaseline ? 'baseline-formed' : openVersion ? 'version-cycle-open' : 'baseline-forming'}">${baselineNotice}</div>
     <section class="card" style="margin-bottom:18px"><div class="card-head"><h3>基本信息</h3></div><div class="card-body"><div class="info-grid">
-      ${infoItem('所属部门', d.department)}${infoItem('交付物类型', d.type)}${infoItem('项目/车型', d.project)}${infoItem('对象编码', d.objectCode)}
+      ${infoItem('所属部门', d.department)}${infoItem('交付物类型', d.type)}${infoItem('交付物类别', d.category)}${infoItem('类别编码', d.categoryCode)}${infoItem('项目/车型', d.project)}
       ${infoItem('业务模块', d.businessModule || '—')}${infoItem('责任人', d.responsiblePerson)}${infoItem('私密等级', confidentialityNames[d.confidentiality] || d.confidentiality)}${infoItem('对外分享', shareNames[d.sharePolicy] || d.sharePolicy)}
     </div>${d.description ? `<p class="muted" style="margin:16px 0 0">${esc(d.description)}</p>` : ''}</div></section>
     <section class="card" style="margin-bottom:18px"><div class="card-head"><h3>版本记录</h3><span class="muted">共 ${versions.length} 个版本</span></div><div class="table-wrap">

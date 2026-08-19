@@ -13,9 +13,8 @@ public sealed partial class DeliverableRepository
         using var transaction = connection.BeginTransaction();
 
         var codes = await ReadCodesAsync(connection, transaction, request.DepartmentId, request.DeliverableTypeId, request.ProjectId, cancellationToken);
-        await ValidateCategoryAsync(connection, transaction, request.CategoryId, request.DeliverableTypeId, cancellationToken);
-        var objectCode = NormalizeCode(request.ObjectCode);
-        var prefix = $"AD-{codes.DepartmentCode}-{codes.TypeCode}-{codes.ProjectCode}-{objectCode}";
+        var categoryCode = await ValidateCategoryAsync(connection, transaction, request.CategoryId, request.DeliverableTypeId, cancellationToken);
+        var prefix = $"AD-{codes.DepartmentCode}-{codes.TypeCode}-{codes.ProjectCode}-{categoryCode}";
 
         await using var sequenceCommand = connection.CreateCommand();
         sequenceCommand.Transaction = transaction;
@@ -29,9 +28,9 @@ public sealed partial class DeliverableRepository
         insert.Transaction = transaction;
         insert.CommandText = """
             INSERT INTO Deliverables(DeliverableCode, UnifiedName, DepartmentId, DeliverableTypeId, CategoryId, ProjectId,
-                ObjectCode, BusinessModule, ResponsiblePerson, DefaultConfidentiality, DefaultSharePolicy,
+                BusinessModule, ResponsiblePerson, DefaultConfidentiality, DefaultSharePolicy,
                 Description, LifecycleStatus, CreatedBy, CreatedAt, UpdatedAt, Revision)
-            VALUES($code,$name,$departmentId,$typeId,$categoryId,$projectId,$objectCode,$module,$owner,$confidentiality,
+            VALUES($code,$name,$departmentId,$typeId,$categoryId,$projectId,$module,$owner,$confidentiality,
                 $sharePolicy,$description,'ACTIVE',$operator,$now,$now,1);
             SELECT last_insert_rowid();
             """;
@@ -41,7 +40,6 @@ public sealed partial class DeliverableRepository
         insert.Parameters.AddValue("$typeId", request.DeliverableTypeId);
         insert.Parameters.AddValue("$categoryId", request.CategoryId);
         insert.Parameters.AddValue("$projectId", request.ProjectId);
-        insert.Parameters.AddValue("$objectCode", objectCode);
         insert.Parameters.AddValue("$module", request.BusinessModule);
         insert.Parameters.AddValue("$owner", request.ResponsiblePerson.Trim());
         insert.Parameters.AddValue("$confidentiality", request.ConfidentialityLevel);
@@ -253,15 +251,16 @@ public sealed partial class DeliverableRepository
         return toStatus;
     }
 
-    private static async Task ValidateCategoryAsync(SqliteConnection connection, SqliteTransaction transaction, int categoryId, int typeId, CancellationToken cancellationToken)
+    private static async Task<string> ValidateCategoryAsync(SqliteConnection connection, SqliteTransaction transaction, int categoryId, int typeId, CancellationToken cancellationToken)
     {
         if (categoryId <= 0) throw new ArgumentException("请选择交付物类别。");
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT COUNT(*) FROM DeliverableCategories WHERE Id=$categoryId AND DeliverableTypeId=$typeId AND IsEnabled=1";
+        command.CommandText = "SELECT CategoryCode FROM DeliverableCategories WHERE Id=$categoryId AND DeliverableTypeId=$typeId AND IsEnabled=1";
         command.Parameters.AddValue("$categoryId", categoryId);
         command.Parameters.AddValue("$typeId", typeId);
-        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 0)
-            throw new ArgumentException("所选交付物类别与交付物类型不匹配或已停用，请重新选择。" );
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        if (value is null) throw new ArgumentException("所选交付物类别与交付物类型不匹配或已停用，请重新选择。" );
+        return Convert.ToString(value)?.Trim().ToUpperInvariant() ?? throw new ArgumentException("交付物类别编码无效。");
     }
 }

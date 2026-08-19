@@ -22,10 +22,10 @@ public sealed partial class DeliverableRepository
 
     private static void ValidateCreateRequest(DeliverableCreateRequest request)
     {
-        if (request.DepartmentId <= 0 || request.DeliverableTypeId <= 0 || request.ProjectId <= 0)
-            throw new ArgumentException("部门、交付物类型和项目必须选择。" );
-        if (string.IsNullOrWhiteSpace(request.ObjectCode) || string.IsNullOrWhiteSpace(request.UnifiedName))
-            throw new ArgumentException("对象编码和统一名称不能为空。" );
+        if (request.DepartmentId <= 0 || request.DeliverableTypeId <= 0 || request.CategoryId <= 0 || request.ProjectId <= 0)
+            throw new ArgumentException("部门、交付物类型、交付物类别和项目必须选择。" );
+        if (string.IsNullOrWhiteSpace(request.UnifiedName))
+            throw new ArgumentException("统一名称不能为空。" );
         if (string.IsNullOrWhiteSpace(request.ResponsiblePerson))
             throw new ArgumentException("责任人不能为空。" );
         if (string.IsNullOrWhiteSpace(request.InitialVersion.InternalVersion) ||
@@ -117,5 +117,4 @@ public sealed partial class DeliverableRepository
         }
         return versionId;
     }
-
 }
