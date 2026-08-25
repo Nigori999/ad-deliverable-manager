@@ -35,11 +35,21 @@ public sealed class DatabaseService
         await using var connection = await OpenConnectionAsync(cancellationToken);
 
         var assembly = Assembly.GetExecutingAssembly();
-        var resourceName = assembly.GetManifestResourceNames()
+        var schemaResource = assembly.GetManifestResourceNames()
             .Single(name => name.EndsWith("Data.schema.sql", StringComparison.OrdinalIgnoreCase));
+        await ExecuteResourceAsync(connection, assembly, schemaResource, cancellationToken);
 
+        var migrationResources = assembly.GetManifestResourceNames()
+            .Where(name => name.Contains(".Data.migrations.", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase);
+        foreach (var resourceName in migrationResources)
+            await ExecuteResourceAsync(connection, assembly, resourceName, cancellationToken);
+    }
+
+    private static async Task ExecuteResourceAsync(SqliteConnection connection, Assembly assembly, string resourceName, CancellationToken cancellationToken)
+    {
         await using var stream = assembly.GetManifestResourceStream(resourceName)
-            ?? throw new InvalidOperationException("无法读取内置数据库脚本。" );
+            ?? throw new InvalidOperationException($"无法读取内置数据库脚本：{resourceName}" );
         using var reader = new StreamReader(stream);
         var sql = await reader.ReadToEndAsync(cancellationToken);
 
