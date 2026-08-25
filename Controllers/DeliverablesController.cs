@@ -14,11 +14,13 @@ public sealed class DeliverablesController : ControllerBase
 {
     private readonly DeliverableRepository _repository;
     private readonly PermissionService _permissions;
+    private readonly DatabaseService _database;
 
-    public DeliverablesController(DeliverableRepository repository, PermissionService permissions)
+    public DeliverablesController(DeliverableRepository repository, PermissionService permissions, DatabaseService database)
     {
         _repository = repository;
         _permissions = permissions;
+        _database = database;
     }
 
     [HttpGet]
@@ -26,6 +28,44 @@ public sealed class DeliverablesController : ControllerBase
     {
         var allowed=await _permissions.GetAllowedDeliverableIdsAsync(User.GetUserId(),PermissionCatalog.DeliveryView,ct);
         return Ok(await _repository.SearchAsync(keyword,departmentId,typeId,projectId,status,confidentiality,sharePolicy,page,pageSize,ct,allowed,categoryId));
+    }
+
+    [HttpGet("planned-categories")]
+    public async Task<IActionResult> PlannedCategories([FromQuery] int projectId, CancellationToken ct)
+    {
+        if (projectId <= 0) return BadRequest(new { message = "请选择车型。" });
+        var userId = User.GetUserId();
+        await using var connection = await _database.OpenConnectionAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT c.Id,c.CategoryCode,c.CategoryName,t.Id,t.TypeCode,t.TypeName,t.DepartmentId
+            FROM ProjectDeliverablePlans p
+            JOIN DeliverableCategories c ON c.Id=p.CategoryId
+            JOIN DeliverableTypes t ON t.Id=c.DeliverableTypeId
+            JOIN Projects prj ON prj.Id=p.ProjectId
+            WHERE p.ProjectId=$projectId AND prj.IsEnabled=1 AND c.IsEnabled=1 AND t.IsEnabled=1
+            ORDER BY t.SortOrder,c.SortOrder,c.CategoryName;
+            """;
+        command.Parameters.AddWithValue("$projectId", projectId);
+        var items = new List<object>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var categoryId = reader.GetInt32(0);
+            var typeId = reader.GetInt32(3);
+            var departmentId = reader.GetInt32(6);
+            if (!await _permissions.HasCreateScopeAsync(userId, PermissionCatalog.DeliveryCreate, departmentId, projectId, typeId, ct)) continue;
+            items.Add(new
+            {
+                id = categoryId,
+                code = reader.GetString(1),
+                name = reader.GetString(2),
+                typeId,
+                typeCode = reader.GetString(4),
+                typeName = reader.GetString(5)
+            });
+        }
+        return Ok(new { projectId, items });
     }
 
     [HttpGet("{id:int}")]
