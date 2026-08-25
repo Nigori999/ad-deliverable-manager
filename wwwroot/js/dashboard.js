@@ -2,6 +2,10 @@ async function renderDashboard() {
   setPage('仪表盘', '交付物、版本和变更状态总览');
   const data = await api('/internal/dashboard');
   const s = data.summary;
+  const ds = data.deliverySummary || {};
+  const deliveryCard = (label, value, status, note) => hasPermission('DELIVERY_SCHEDULE_VIEW')
+    ? `<a class="stat-card" href="#/delivery-schedules/${status}" style="text-decoration:none"><span>${esc(label)}</span><strong>${Number(value || 0)}</strong><small>${esc(note)}</small></a>`
+    : `<div class="stat-card"><span>${esc(label)}</span><strong>${Number(value || 0)}</strong><small>${esc(note)}</small></div>`;
   content.innerHTML = `
     <section class="stat-grid">
       ${statCard('交付物总数', s.totalDeliverables, '项')}
@@ -11,6 +15,15 @@ async function renderDashboard() {
       ${statCard('本月变更', s.monthlyChanges, '项')}
       ${statCard('已废止版本', s.deprecatedVersions, '个')}
     </section>
+    <section class="card" style="margin:18px 0"><div class="card-head"><div><h3>交付节点预警</h3><p class="muted section-note">实际交付时间取交付物第一个版本的创建时间；即将到期按未来7天统计。</p></div>${hasPermission('DELIVERY_SCHEDULE_VIEW')?'<a class="btn btn-light btn-sm" href="#/delivery-schedules">查看交付计划</a>':''}</div><div class="card-body">
+      <div class="stat-grid" style="margin-bottom:18px">
+        ${deliveryCard('即将到期',ds.dueSoon,'DUE_SOON','项')}
+        ${deliveryCard('延期未交付',ds.overdueUndelivered,'OVERDUE_UNDELIVERED','项')}
+        ${deliveryCard('延期交付',ds.lateDelivered,'LATE_DELIVERED','项')}
+        ${deliveryCard('正常交付',ds.onTimeDelivered,'ON_TIME_DELIVERED','项')}
+      </div>
+      <div class="recent-list">${(data.deliveryRisks||[]).length?(data.deliveryRisks||[]).map(x=>{const status=x.status==='OVERDUE_UNDELIVERED'?`已延期${Math.max(0,Number(x.deltaDays||0))}天`:`${Math.max(0,-Number(x.deltaDays||0))}天后到期`;const inner=`<div><strong>${esc(x.name)}</strong><small>${esc(x.vehicleModel||x.projectName)} · ${esc(x.responsiblePerson)} · 计划 ${esc(x.plannedDeliveryDate)}</small></div><span class="badge ${x.status==='OVERDUE_UNDELIVERED'?'deprecated':'in_review'}">${esc(status)}</span>`;return hasPermission('DELIVERY_SCHEDULE_VIEW')?`<a class="recent-row" href="#/delivery-schedules/${x.status}">${inner}</a>`:`<div class="recent-row">${inner}</div>`;}).join(''):'<div class="empty">当前没有即将到期或延期未交付项。</div>'}</div>
+    </div></section>
     <section class="dashboard-grid">
       <div class="card"><div class="card-head"><h3>各部门交付物数量</h3></div><div class="card-body"><canvas id="department-chart" class="chart"></canvas></div></div>
       <div class="card"><div class="card-head"><h3>版本状态分布</h3></div><div class="card-body"><canvas id="status-chart" class="chart"></canvas><div id="status-legend" class="chart-legend"></div></div></div>
