@@ -130,11 +130,22 @@ public sealed class DeliverySchedulesController : ControllerBase
         var userId = User.GetUserId();
         var operatorName = NormalizeOperator(request.Operator);
         await using var connection = await _database.OpenConnectionAsync(ct);
-        var validated = new List<(int CategoryId, string CategoryName, string Date)>();
 
+        await using (var projectCommand = connection.CreateCommand())
+        {
+            projectCommand.CommandText = "SELECT COUNT(*) FROM Projects WHERE Id=$id AND IsEnabled=1";
+            projectCommand.Parameters.AddWithValue("$id", request.ProjectId);
+            if (Convert.ToInt32(await projectCommand.ExecuteScalarAsync(ct)) == 0)
+                return BadRequest(new { message = "所选车型不存在或已停用。" });
+        }
+
+        var validated = new List<(int CategoryId, string CategoryName, string Date)>();
         foreach (var item in normalized)
         {
-            var date = ParseDate(item.PlannedDeliveryDate);
+            string date;
+            try { date = ParseDate(item.PlannedDeliveryDate); }
+            catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+
             await using var categoryCommand = connection.CreateCommand();
             categoryCommand.CommandText = """
                 SELECT c.CategoryName,t.Id,t.DepartmentId
@@ -192,12 +203,20 @@ public sealed class DeliverySchedulesController : ControllerBase
     {
         var ids = (request.PlanIds ?? []).Distinct().Where(x => x > 0).ToArray();
         if (ids.Length == 0) return BadRequest(new { message = "请至少选择一条交付计划。" });
-        var date = ParseDate(request.PlannedDeliveryDate);
+
+        string date;
+        try { date = ParseDate(request.PlannedDeliveryDate); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+
         var operatorName = NormalizeOperator(request.Operator);
         var userId = User.GetUserId();
-
         await using var connection = await _database.OpenConnectionAsync(ct);
-        var plans = await ValidatePlanAccessAsync(connection, ids, userId, PermissionCatalog.DeliveryScheduleEdit, ct);
+
+        List<PlanAccessRow> plans;
+        try { plans = await ValidatePlanAccessAsync(connection, ids, userId, PermissionCatalog.DeliveryScheduleEdit, ct); }
+        catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
+        catch (UnauthorizedAccessException ex) { return StatusCode(403, new { message = ex.Message }); }
+
         using var transaction = connection.BeginTransaction();
         var now = DateTime.UtcNow.ToString("O");
         foreach (var plan in plans)
@@ -224,9 +243,13 @@ public sealed class DeliverySchedulesController : ControllerBase
         if (ids.Length == 0) return BadRequest(new { message = "请至少选择一条交付计划。" });
         var operatorName = NormalizeOperator(request.Operator);
         var userId = User.GetUserId();
-
         await using var connection = await _database.OpenConnectionAsync(ct);
-        var plans = await ValidatePlanAccessAsync(connection, ids, userId, PermissionCatalog.DeliveryScheduleEdit, ct);
+
+        List<PlanAccessRow> plans;
+        try { plans = await ValidatePlanAccessAsync(connection, ids, userId, PermissionCatalog.DeliveryScheduleEdit, ct); }
+        catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
+        catch (UnauthorizedAccessException ex) { return StatusCode(403, new { message = ex.Message }); }
+
         using var transaction = connection.BeginTransaction();
         var now = DateTime.UtcNow.ToString("O");
         foreach (var plan in plans)
