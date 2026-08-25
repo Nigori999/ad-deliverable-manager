@@ -44,6 +44,68 @@ public sealed class DashboardController : ControllerBase
         var recent=new List<object>();await using(var command=connection.CreateCommand()){
             command.CommandText=$"SELECT d.Id,d.DeliverableCode,d.UnifiedName,v.InternalVersion,v.VersionStatus,v.UpdatedAt FROM DeliverableVersions v JOIN Deliverables d ON d.Id=v.DeliverableId WHERE {scope} ORDER BY v.UpdatedAt DESC LIMIT 8;";command.Parameters.AddWithValue("$scopeUserId",User.GetUserId());await using var reader=await command.ExecuteReaderAsync(cancellationToken);while(await reader.ReadAsync(cancellationToken))recent.Add(new{id=reader.GetInt32(0),code=reader.GetString(1),name=reader.GetString(2),version=reader.GetString(3),status=reader.GetString(4),updatedAt=reader.GetString(5)});
         }
-        return Ok(new{summary=new{totalDeliverables,currentVersions,pendingReview,monthlyNewVersions,monthlyChanges,deprecatedVersions},departmentDistribution,typeDistribution,statusDistribution,monthlyTrend,recent});
+
+        var deliveryStatus=new Dictionary<string,long>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["DUE_SOON"]=0,["OVERDUE_UNDELIVERED"]=0,["LATE_DELIVERED"]=0,["ON_TIME_DELIVERED"]=0
+        };
+        var deliveryRisks=new List<object>();
+        await using(var command=connection.CreateCommand()){
+            command.CommandText=$"""
+                WITH delivery AS (
+                    SELECT d.Id,d.DeliverableCode,d.UnifiedName,d.ResponsiblePerson,p.ProjectName,p.VehicleModel,
+                           s.PlannedDeliveryDate,
+                           (SELECT MIN(v.CreatedAt) FROM DeliverableVersions v WHERE v.DeliverableId=d.Id) AS ActualDeliveryDate
+                    FROM Deliverables d
+                    JOIN Projects p ON p.Id=d.ProjectId
+                    JOIN DeliverableSchedules s ON s.DeliverableId=d.Id
+                    WHERE d.LifecycleStatus='ACTIVE' AND {scope}
+                ), classified AS (
+                    SELECT *,CASE
+                        WHEN ActualDeliveryDate IS NOT NULL AND date(ActualDeliveryDate)<=date(PlannedDeliveryDate) THEN 'ON_TIME_DELIVERED'
+                        WHEN ActualDeliveryDate IS NOT NULL AND date(ActualDeliveryDate)>date(PlannedDeliveryDate) THEN 'LATE_DELIVERED'
+                        WHEN date(PlannedDeliveryDate)<date('now','localtime') THEN 'OVERDUE_UNDELIVERED'
+                        WHEN date(PlannedDeliveryDate)<=date('now','localtime','+7 day') THEN 'DUE_SOON'
+                        ELSE 'UPCOMING' END AS DeliveryStatus
+                    FROM delivery
+                )
+                SELECT DeliveryStatus,COUNT(*) FROM classified
+                WHERE DeliveryStatus IN ('DUE_SOON','OVERDUE_UNDELIVERED','LATE_DELIVERED','ON_TIME_DELIVERED')
+                GROUP BY DeliveryStatus;
+                """;
+            command.Parameters.AddWithValue("$scopeUserId",User.GetUserId());
+            await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+            while(await reader.ReadAsync(cancellationToken))deliveryStatus[reader.GetString(0)]=reader.GetInt64(1);
+        }
+        await using(var command=connection.CreateCommand()){
+            command.CommandText=$"""
+                WITH delivery AS (
+                    SELECT d.Id,d.DeliverableCode,d.UnifiedName,d.ResponsiblePerson,p.ProjectName,p.VehicleModel,
+                           s.PlannedDeliveryDate,
+                           (SELECT MIN(v.CreatedAt) FROM DeliverableVersions v WHERE v.DeliverableId=d.Id) AS ActualDeliveryDate
+                    FROM Deliverables d
+                    JOIN Projects p ON p.Id=d.ProjectId
+                    JOIN DeliverableSchedules s ON s.DeliverableId=d.Id
+                    WHERE d.LifecycleStatus='ACTIVE' AND {scope}
+                ), classified AS (
+                    SELECT *,CASE
+                        WHEN ActualDeliveryDate IS NOT NULL THEN NULL
+                        WHEN date(PlannedDeliveryDate)<date('now','localtime') THEN 'OVERDUE_UNDELIVERED'
+                        WHEN date(PlannedDeliveryDate)<=date('now','localtime','+7 day') THEN 'DUE_SOON'
+                        ELSE NULL END AS DeliveryStatus
+                    FROM delivery
+                )
+                SELECT Id,DeliverableCode,UnifiedName,ResponsiblePerson,ProjectName,VehicleModel,PlannedDeliveryDate,DeliveryStatus,
+                       CAST(julianday(date('now','localtime'))-julianday(date(PlannedDeliveryDate)) AS INTEGER) AS DeltaDays
+                FROM classified WHERE DeliveryStatus IS NOT NULL
+                ORDER BY CASE DeliveryStatus WHEN 'OVERDUE_UNDELIVERED' THEN 0 ELSE 1 END,PlannedDeliveryDate
+                LIMIT 8;
+                """;
+            command.Parameters.AddWithValue("$scopeUserId",User.GetUserId());
+            await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+            while(await reader.ReadAsync(cancellationToken))deliveryRisks.Add(new{id=reader.GetInt32(0),code=reader.GetString(1),name=reader.GetString(2),responsiblePerson=reader.GetString(3),projectName=reader.GetString(4),vehicleModel=reader.IsDBNull(5)?null:reader.GetString(5),plannedDeliveryDate=reader.GetString(6),status=reader.GetString(7),deltaDays=reader.GetInt32(8)});
+        }
+
+        return Ok(new{summary=new{totalDeliverables,currentVersions,pendingReview,monthlyNewVersions,monthlyChanges,deprecatedVersions},deliverySummary=new{dueSoon=deliveryStatus["DUE_SOON"],overdueUndelivered=deliveryStatus["OVERDUE_UNDELIVERED"],lateDelivered=deliveryStatus["LATE_DELIVERED"],onTimeDelivered=deliveryStatus["ON_TIME_DELIVERED"]},deliveryRisks,departmentDistribution,typeDistribution,statusDistribution,monthlyTrend,recent});
     }
 }
