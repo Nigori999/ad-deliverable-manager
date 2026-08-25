@@ -10,10 +10,13 @@ renderDashboard = async function () {
   setPage('仪表盘', '交付物、版本和变更状态总览');
   const data = await api('/internal/dashboard');
   const s = data.summary;
+  const ds = data.deliverySummary || {};
+  const canViewSchedules = hasPermission('DELIVERY_SCHEDULE_VIEW');
+  const deliveryMetric = (label, value, note, tone, status) => uxMetricCard(label, `${Number(value || 0)} 项`, note, tone, canViewSchedules ? `#/delivery-schedules/${status}` : '');
   content.innerHTML = `
     <section class="ux-page-intro">
-      <div><strong>运营概览</strong><span>快速判断交付物规模、版本积压与变更活跃度</span></div>
-      <div class="ux-quick-actions"><a class="btn btn-light btn-sm" href="#/deliverables">查看台账</a><a class="btn btn-light btn-sm" href="#/changes">查看变更</a><a class="btn btn-primary btn-sm" href="#/analytics">完整度分析</a></div>
+      <div><strong>运营概览</strong><span>快速判断交付物规模、版本积压、交付风险与变更活跃度</span></div>
+      <div class="ux-quick-actions"><a class="btn btn-light btn-sm" href="#/deliverables">查看台账</a>${canViewSchedules?'<a class="btn btn-light btn-sm" href="#/delivery-schedules">交付计划</a>':''}<a class="btn btn-light btn-sm" href="#/changes">查看变更</a><a class="btn btn-primary btn-sm" href="#/analytics">完整度分析</a></div>
     </section>
     <section class="ux-metric-grid">
       ${uxMetricCard('交付物总数', `${Number(s.totalDeliverables || 0)} 项`, '当前纳管的有效交付物', 'primary', '#/deliverables')}
@@ -23,6 +26,15 @@ renderDashboard = async function () {
       ${uxMetricCard('本月变更', `${Number(s.monthlyChanges || 0)} 项`, '受控变更流程活跃度', '', '#/changes')}
       ${uxMetricCard('已废止版本', `${Number(s.deprecatedVersions || 0)} 个`, '保留历史记录，不再继续使用', 'muted-tone')}
     </section>
+    <section class="card ux-full-card" style="margin-bottom:18px"><div class="card-head"><div><h3>交付节点预警</h3><p class="ux-section-note">来源于车型交付计划；实际交付日期自动匹配同车型、同类别台账中最早的首版创建时间</p></div>${canViewSchedules?'<a class="btn btn-light btn-sm" href="#/delivery-schedules">查看交付计划</a>':''}</div><div class="card-body">
+      <div class="ux-metric-grid" style="margin-bottom:18px">
+        ${deliveryMetric('即将到期',ds.dueSoon,'未来 7 天内到达计划节点','warning','DUE_SOON')}
+        ${deliveryMetric('延期未交付',ds.overdueUndelivered,'已过计划日期且尚无实际交付','warning','OVERDUE_UNDELIVERED')}
+        ${deliveryMetric('延期交付',ds.lateDelivered,'实际首次交付晚于计划日期','','LATE_DELIVERED')}
+        ${deliveryMetric('正常交付',ds.onTimeDelivered,'实际首次交付未晚于计划日期','success','ON_TIME_DELIVERED')}
+      </div>
+      <div class="ux-recent-list">${(data.deliveryRisks||[]).length?(data.deliveryRisks||[]).map(x=>{const status=x.status==='OVERDUE_UNDELIVERED'?`已延期 ${Math.max(0,Number(x.days||0))} 天`:(Number(x.days||0)===0?'今天到期':`${Math.max(0,Number(x.days||0))} 天后到期`);const inner=`<div class="ux-recent-main"><strong>${esc(x.name)}</strong><small><span>${esc(x.vehicleModel||x.projectName)}</span><span>${esc(x.typeName)}</span><span>计划 ${esc(x.plannedDeliveryDate)}</span></small></div><span class="badge ${x.status==='OVERDUE_UNDELIVERED'?'deprecated':'in_review'}">${esc(status)}</span>`;return canViewSchedules?`<a class="ux-recent-row" href="#/delivery-schedules/${x.status}/${x.projectId}">${inner}</a>`:`<div class="ux-recent-row">${inner}</div>`;}).join(''):'<div class="empty">当前没有即将到期或延期未交付的车型交付计划。</div>'}</div>
+    </div></section>
     <section class="ux-dashboard-grid ux-dashboard-grid-main">
       <article class="card ux-chart-card"><div class="card-head"><div><h3>各部门交付物数量</h3><p class="ux-section-note">用于观察交付物在各责任部门间的分布</p></div></div><div class="card-body"><canvas id="department-chart" class="chart"></canvas></div></article>
       <article class="card ux-chart-card"><div class="card-head"><div><h3>版本状态分布</h3><p class="ux-section-note">识别草稿、审批、发布与废止版本占比</p></div></div><div class="card-body"><canvas id="status-chart" class="chart"></canvas><div id="status-legend" class="chart-legend ux-chart-legend"></div></div></article>
