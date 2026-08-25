@@ -8,6 +8,8 @@ public static class PermissionCatalog
     public const string DeliveryDelete = "DELIVERY_DELETE";
     public const string DeliveryArchive = "DELIVERY_ARCHIVE";
     public const string DeliveryExport = "DELIVERY_EXPORT";
+    public const string DeliveryScheduleView = "DELIVERY_SCHEDULE_VIEW";
+    public const string DeliveryScheduleEdit = "DELIVERY_SCHEDULE_EDIT";
 
     public const string VersionView = "VERSION_VIEW";
     public const string VersionCreate = "VERSION_CREATE";
@@ -72,6 +74,8 @@ public static class PermissionCatalog
         (DeliveryDelete, "删除交付物", "交付物台账"),
         (DeliveryArchive, "归档交付物", "交付物台账"),
         (DeliveryExport, "导出交付物", "交付物台账"),
+        (DeliveryScheduleView, "查看交付计划", "交付计划"),
+        (DeliveryScheduleEdit, "设置交付计划", "交付计划"),
         (VersionView, "查看版本", "交付物台账"),
         (VersionCreate, "新增版本", "交付物台账"),
         (VersionEdit, "编辑草稿版本", "交付物台账"),

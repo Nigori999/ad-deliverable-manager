@@ -14,6 +14,7 @@ public sealed partial class DeliverableRepository
 
         var codes = await ReadCodesAsync(connection, transaction, request.DepartmentId, request.DeliverableTypeId, request.ProjectId, cancellationToken);
         var categoryCode = await ValidateCategoryAsync(connection, transaction, request.CategoryId, request.DeliverableTypeId, cancellationToken);
+        await ValidateProjectCategoryPlanAsync(connection, transaction, request.ProjectId, request.CategoryId, cancellationToken);
         var prefix = $"AD-{codes.DepartmentCode}-{codes.TypeCode}-{codes.ProjectCode}-{categoryCode}";
 
         await using var sequenceCommand = connection.CreateCommand();
@@ -69,11 +70,17 @@ public sealed partial class DeliverableRepository
         await using (var typeCommand = connection.CreateCommand())
         {
             typeCommand.Transaction = transaction;
-            typeCommand.CommandText = "SELECT DeliverableTypeId FROM Deliverables WHERE Id=$id";
+            typeCommand.CommandText = "SELECT DeliverableTypeId,ProjectId,CategoryId FROM Deliverables WHERE Id=$id";
             typeCommand.Parameters.AddValue("$id", id);
-            var typeValue = await typeCommand.ExecuteScalarAsync(cancellationToken);
-            if (typeValue is null) throw new KeyNotFoundException("交付物不存在。");
-            await ValidateCategoryAsync(connection, transaction, request.CategoryId, Convert.ToInt32(typeValue), cancellationToken);
+            await using var reader = await typeCommand.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken)) throw new KeyNotFoundException("交付物不存在。");
+            var typeId = reader.GetInt32(0);
+            var projectId = reader.GetInt32(1);
+            var currentCategoryId = reader.GetInt32(2);
+            await reader.DisposeAsync();
+            await ValidateCategoryAsync(connection, transaction, request.CategoryId, typeId, cancellationToken);
+            if (request.CategoryId != currentCategoryId)
+                await ValidateProjectCategoryPlanAsync(connection, transaction, projectId, request.CategoryId, cancellationToken);
         }
 
         await using var command = connection.CreateCommand();
@@ -262,5 +269,16 @@ public sealed partial class DeliverableRepository
         var value = await command.ExecuteScalarAsync(cancellationToken);
         if (value is null) throw new ArgumentException("所选交付物类别与交付物类型不匹配或已停用，请重新选择。" );
         return Convert.ToString(value)?.Trim().ToUpperInvariant() ?? throw new ArgumentException("交付物类别编码无效。");
+    }
+
+    private static async Task ValidateProjectCategoryPlanAsync(SqliteConnection connection, SqliteTransaction transaction, int projectId, int categoryId, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT COUNT(*) FROM ProjectDeliverablePlans WHERE ProjectId=$projectId AND CategoryId=$categoryId";
+        command.Parameters.AddValue("$projectId", projectId);
+        command.Parameters.AddValue("$categoryId", categoryId);
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 0)
+            throw new ArgumentException("所选交付物类别未配置在当前车型的交付计划中，请先在“交付计划”页面完成配置。");
     }
 }
