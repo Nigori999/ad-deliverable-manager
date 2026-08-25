@@ -87,7 +87,7 @@ function openAddDeliveryPlans(data,onSaved){
   });
   modal.root.classList.add('schedule-plan-modal');
   const refreshGroupCheck=typeId=>{
-    const rows=[...modal.root.querySelectorAll(`.schedule-add-row[data-type-id="${typeId}"]:not(.hidden)` )];
+    const rows=[...modal.root.querySelectorAll(`.schedule-add-row[data-type-id="${typeId}"]:not(.hidden)`)];
     const groupCheck=modal.root.querySelector(`.schedule-add-group-check[data-type-id="${typeId}"]`);
     if(!groupCheck||!rows.length)return;
     const checks=rows.map(row=>row.querySelector('.schedule-add-check'));
@@ -139,7 +139,7 @@ async function renderDeliverySchedules(initialStatus=''){
   const visible=(data.items||[]).filter(x=>(!state.scheduleStatusFilter||x.status===state.scheduleStatusFilter)&&(!keyword||`${x.typeName} ${x.categoryName} ${x.categoryCode}`.toLowerCase().includes(keyword)));
   const groups=groupDeliveryPlanItems(visible);
   const stat=(label,value,status,help)=>`<button type="button" class="schedule-stat ${state.scheduleStatusFilter===status&&status?'active':''}" data-schedule-status="${status}"><span>${esc(label)}</span><strong>${Number(value||0)}</strong><small>${esc(help)}</small></button>`;
-  const rows=groups.length?groups.map(group=>`<tr class="schedule-group-row"><td>${canEdit?`<input type="checkbox" class="schedule-group-main-check" data-type-id="${group.typeId}" title="选择本组">`:''}</td><td colspan="6"><strong>${esc(group.typeName)}</strong><span>${group.items.length} 项</span></td></tr>${group.items.map(row=>`<tr data-schedule-row="${row.id}" data-type-id="${row.typeId}">
+  const rows=groups.length?groups.map(group=>`<tr class="schedule-group-row" data-schedule-group="${group.typeId}"><td>${canEdit?`<input type="checkbox" class="schedule-group-main-check" data-type-id="${group.typeId}" title="选择本组">`:''}</td><td colspan="6"><strong>${esc(group.typeName)}</strong><span>${group.items.length} 项</span></td></tr>${group.items.map(row=>`<tr data-schedule-row="${row.id}" data-type-id="${row.typeId}" data-search="${esc(`${row.typeName} ${row.categoryName} ${row.categoryCode}`.toLowerCase())}">
     <td>${canEdit?`<input type="checkbox" class="schedule-row-check" value="${row.id}">`:''}</td>
     <td><div class="schedule-category"><strong>${esc(row.categoryName)}</strong><small>${esc(row.categoryCode)}</small></div></td>
     <td>${canEdit?`<input type="date" class="schedule-date-input" data-id="${row.id}" value="${esc(row.plannedDeliveryDate)}">`:esc(row.plannedDeliveryDate)}</td>
@@ -170,28 +170,46 @@ async function renderDeliverySchedules(initialStatus=''){
 
   byId('schedule-project')?.addEventListener('change',async event=>{state.scheduleProjectId=Number(event.target.value)||null;state.scheduleStatusFilter='';state.scheduleKeyword='';await renderDeliverySchedules('');});
   byId('schedule-status-filter')?.addEventListener('change',async event=>{state.scheduleStatusFilter=event.target.value;await renderDeliverySchedules(event.target.value);});
-  byId('schedule-search')?.addEventListener('input',event=>{state.scheduleKeyword=event.target.value;clearTimeout(state.scheduleSearchTimer);state.scheduleSearchTimer=setTimeout(()=>renderDeliverySchedules(state.scheduleStatusFilter),180);});
-  content.querySelectorAll('[data-schedule-status]').forEach(button=>button.onclick=async()=>{state.scheduleStatusFilter=button.dataset.scheduleStatus||'';await renderDeliverySchedules(state.scheduleStatusFilter);});
-  if(!canEdit)return;
+  if(!canEdit){
+    byId('schedule-search')?.addEventListener('input',event=>applyScheduleSearch(event.target.value));
+    return;
+  }
 
   const refresh=()=>renderDeliverySchedules(state.scheduleStatusFilter);
-  byId('schedule-add')?.addEventListener('click',()=>openAddDeliveryPlans(data,refresh));
-  byId('schedule-empty-add')?.addEventListener('click',()=>openAddDeliveryPlans(data,refresh));
-  const selectedIds=()=>[...content.querySelectorAll('.schedule-row-check:checked')].map(x=>Number(x.value));
+  const selectedIds=()=>[...content.querySelectorAll('tr[data-schedule-row]:not(.hidden) .schedule-row-check:checked')].map(x=>Number(x.value));
   const refreshSelection=()=>{
     const ids=selectedIds();
     byId('schedule-selected-count').textContent=ids.length?`已选择 ${ids.length} 项`:'未选择';
     byId('schedule-bulk-set').disabled=!ids.length;
     byId('schedule-bulk-delete').disabled=!ids.length;
     content.querySelectorAll('.schedule-group-main-check').forEach(groupCheck=>{
-      const checks=[...content.querySelectorAll(`tr[data-type-id="${groupCheck.dataset.typeId}"] .schedule-row-check`)];
+      const checks=[...content.querySelectorAll(`tr[data-type-id="${groupCheck.dataset.typeId}"]:not(.hidden) .schedule-row-check`)];
       groupCheck.checked=checks.length>0&&checks.every(x=>x.checked);
       groupCheck.indeterminate=!groupCheck.checked&&checks.some(x=>x.checked);
     });
   };
+  const applyScheduleSearch=value=>{
+    state.scheduleKeyword=value;
+    const current=value.trim().toLowerCase();
+    content.querySelectorAll('tr[data-schedule-row]').forEach(row=>{
+      const hidden=!!current&&!row.dataset.search.includes(current);
+      row.classList.toggle('hidden',hidden);
+      if(hidden)row.querySelector('.schedule-row-check').checked=false;
+    });
+    content.querySelectorAll('[data-schedule-group]').forEach(groupRow=>{
+      const typeId=groupRow.dataset.scheduleGroup;
+      const hasVisible=[...content.querySelectorAll(`tr[data-type-id="${typeId}"][data-schedule-row]`)].some(row=>!row.classList.contains('hidden'));
+      groupRow.classList.toggle('hidden',!hasVisible);
+    });
+    refreshSelection();
+  };
+  byId('schedule-search')?.addEventListener('input',event=>applyScheduleSearch(event.target.value));
+  content.querySelectorAll('[data-schedule-status]').forEach(button=>button.onclick=async()=>{state.scheduleStatusFilter=button.dataset.scheduleStatus||'';await renderDeliverySchedules(state.scheduleStatusFilter);});
+  byId('schedule-add')?.addEventListener('click',()=>openAddDeliveryPlans(data,refresh));
+  byId('schedule-empty-add')?.addEventListener('click',()=>openAddDeliveryPlans(data,refresh));
   content.querySelectorAll('.schedule-row-check').forEach(check=>check.onchange=refreshSelection);
-  content.querySelectorAll('.schedule-group-main-check').forEach(check=>check.onchange=()=>{content.querySelectorAll(`tr[data-type-id="${check.dataset.typeId}"] .schedule-row-check`).forEach(x=>x.checked=check.checked);refreshSelection();});
-  byId('schedule-check-all')?.addEventListener('change',event=>{content.querySelectorAll('.schedule-row-check').forEach(x=>x.checked=event.target.checked);refreshSelection();});
+  content.querySelectorAll('.schedule-group-main-check').forEach(check=>check.onchange=()=>{content.querySelectorAll(`tr[data-type-id="${check.dataset.typeId}"]:not(.hidden) .schedule-row-check`).forEach(x=>x.checked=check.checked);refreshSelection();});
+  byId('schedule-check-all')?.addEventListener('change',event=>{content.querySelectorAll('tr[data-schedule-row]:not(.hidden) .schedule-row-check').forEach(x=>x.checked=event.target.checked);refreshSelection();});
   content.querySelectorAll('.schedule-date-input').forEach(input=>input.onchange=async()=>{
     const previous=(data.items||[]).find(x=>Number(x.id)===Number(input.dataset.id))?.plannedDeliveryDate||'';
     if(!input.value){input.value=previous;toast('计划项必须保留计划交付日期；如不再跟踪请使用“删除”。','error');return;}
