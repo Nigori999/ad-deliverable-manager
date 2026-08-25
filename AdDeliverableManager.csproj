@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Data/schema.sql" />
+    <EmbeddedResource Include="Data/migrations/*.sql" />
     <Content Include="data/.gitkeep" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="backups/.gitkeep" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="logs/.gitkeep" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
