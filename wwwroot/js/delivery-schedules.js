@@ -1,70 +1,214 @@
-const deliveryScheduleStatusNames={UNSET:'未设置',UPCOMING:'未到期',DUE_SOON:'即将到期',OVERDUE_UNDELIVERED:'延期未交付',LATE_DELIVERED:'延期交付',ON_TIME_DELIVERED:'正常交付'};
+const deliveryScheduleStatusNames={UPCOMING:'未到期',DUE_SOON:'即将到期',OVERDUE_UNDELIVERED:'延期未交付',LATE_DELIVERED:'延期交付',ON_TIME_DELIVERED:'正常交付'};
 
 function deliveryScheduleStatusText(row){
   switch(row.status){
-    case 'DUE_SOON': return row.days===0?'今天到期':`${row.days}天后到期`;
-    case 'OVERDUE_UNDELIVERED': return `已延期${row.days}天`;
-    case 'LATE_DELIVERED': return `延期${row.days}天交付`;
-    case 'ON_TIME_DELIVERED': return row.days===0?'按期交付':`提前${Math.abs(row.days||0)}天交付`;
-    case 'UPCOMING': return `还有${row.days}天`;
+    case 'DUE_SOON':return row.days===0?'今天到期':`${row.days}天后到期`;
+    case 'OVERDUE_UNDELIVERED':return `已延期${row.days}天`;
+    case 'LATE_DELIVERED':return `延期${row.days}天交付`;
+    case 'ON_TIME_DELIVERED':return row.days===0?'按期交付':`提前${Math.abs(row.days||0)}天交付`;
+    case 'UPCOMING':return `还有${row.days}天`;
     default:return deliveryScheduleStatusNames[row.status]||row.status;
   }
 }
+
 function deliveryScheduleBadge(row){
-  const cls={DUE_SOON:'in_review',OVERDUE_UNDELIVERED:'deprecated',LATE_DELIVERED:'deprecated',ON_TIME_DELIVERED:'released',UPCOMING:'active',UNSET:''}[row.status]||'';
+  const cls={DUE_SOON:'in_review',OVERDUE_UNDELIVERED:'deprecated',LATE_DELIVERED:'deprecated',ON_TIME_DELIVERED:'released',UPCOMING:'active'}[row.status]||'';
   return `<span class="badge ${cls}">${esc(deliveryScheduleStatusText(row))}</span>`;
 }
-async function saveDeliverySchedule(deliverableIds,plannedDeliveryDate){
-  await api('/internal/delivery-schedules',{method:'PUT',body:JSON.stringify({deliverableIds,plannedDeliveryDate:plannedDeliveryDate||null,operator:operatorName()})});
+
+function groupDeliveryPlanItems(items){
+  const groups=[];
+  for(const row of items){
+    let group=groups.find(x=>x.typeId===row.typeId);
+    if(!group){group={typeId:row.typeId,typeCode:row.typeCode,typeName:row.typeName,items:[]};groups.push(group);}
+    group.items.push(row);
+  }
+  return groups;
 }
-async function openBulkScheduleDate(ids,onSaved,title='批量设置计划交付日期'){
-  showModal(title,`<form id="schedule-bulk-form"><div class="field"><label>计划交付日期 *</label><input type="date" name="plannedDeliveryDate" required></div><p class="form-hint">将同时更新 ${ids.length} 项交付物。</p></form>`,{submitText:'保存',onSubmit:async close=>{const form=byId('schedule-bulk-form');if(!form.reportValidity())throw new Error('请选择计划交付日期。');await saveDeliverySchedule(ids,new FormData(form).get('plannedDeliveryDate'));close();toast(`已更新 ${ids.length} 项交付计划。`);await onSaved();}});
+
+async function updateDeliveryPlanDates(planIds,plannedDeliveryDate){
+  return api('/internal/delivery-schedules',{method:'PUT',body:JSON.stringify({planIds,plannedDeliveryDate,operator:operatorName()})});
 }
+
+async function deleteDeliveryPlans(planIds){
+  return api('/internal/delivery-schedules',{method:'DELETE',body:JSON.stringify({planIds,operator:operatorName()})});
+}
+
+async function createDeliveryPlans(projectId,items){
+  return api('/internal/delivery-schedules',{method:'POST',body:JSON.stringify({projectId,items,operator:operatorName()})});
+}
+
+function openBulkPlanDate(planIds,onSaved,title='批量调整计划日期'){
+  showModal(title,`<form id="schedule-bulk-form"><div class="field"><label>新的计划交付日期 *</label><input type="date" name="plannedDeliveryDate" required autofocus></div><p class="form-hint">将同时调整已选择的 ${planIds.length} 条车型交付计划。</p></form>`,{
+    submitText:'确认调整',
+    onSubmit:async close=>{
+      const form=byId('schedule-bulk-form');
+      if(!form.reportValidity())throw new Error('请选择计划交付日期。');
+      await updateDeliveryPlanDates(planIds,new FormData(form).get('plannedDeliveryDate'));
+      close();toast(`已更新 ${planIds.length} 条交付计划。`);await onSaved();
+    }
+  });
+}
+
+function openAddDeliveryPlans(data,onSaved){
+  const existing=new Set((data.items||[]).map(x=>Number(x.categoryId)));
+  const candidates=(data.categories||[]).filter(x=>!existing.has(Number(x.id)));
+  if(!candidates.length){toast('当前车型下可维护的交付物类别都已加入计划。');return;}
+  const groups=groupDeliveryPlanItems(candidates.map(x=>({...x,categoryId:x.id,categoryName:x.name,categoryCode:x.code})));
+  const groupHtml=groups.map(group=>`<section class="schedule-add-group" data-add-group="${group.typeId}">
+    <div class="schedule-add-group-head">
+      <label class="schedule-group-check"><input type="checkbox" class="schedule-add-group-check" data-type-id="${group.typeId}"><strong>${esc(group.typeName)}</strong><span>${group.items.length} 个可选类别</span></label>
+      <label class="schedule-group-date"><span>整组日期</span><input type="date" class="schedule-add-group-date" data-type-id="${group.typeId}" title="填写后将自动选择并填充本组全部类别"></label>
+    </div>
+    <div class="schedule-add-list">${group.items.map(item=>`<div class="schedule-add-row" data-search="${esc(`${group.typeName} ${item.categoryName} ${item.categoryCode}`.toLowerCase())}" data-type-id="${group.typeId}">
+      <label class="schedule-add-main"><input type="checkbox" class="schedule-add-check" value="${item.categoryId}"><span><strong>${esc(item.categoryName)}</strong><small>${esc(item.categoryCode)}</small></span></label>
+      <input type="date" class="schedule-add-date" data-category-id="${item.categoryId}" aria-label="${esc(item.categoryName)}计划交付日期">
+    </div>`).join('')}</div>
+  </section>`).join('');
+  const body=`<form id="schedule-add-form">
+    <div class="schedule-add-toolbar"><div class="field schedule-add-search"><label>快速查找类别</label><input id="schedule-add-search" placeholder="输入类型、类别名称或编码"></div><div class="schedule-add-hint">可直接填写“整组日期”，系统会自动选中整组；单项日期可再覆盖。</div></div>
+    <div class="schedule-add-groups">${groupHtml}</div>
+  </form>`;
+  const modal=showModal('添加交付计划',body,{
+    submitText:'添加到计划',
+    onSubmit:async close=>{
+      const selected=[...modal.root.querySelectorAll('.schedule-add-check:checked')];
+      if(!selected.length)throw new Error('请至少选择一个交付物类别。');
+      const items=selected.map(check=>{
+        const categoryId=Number(check.value);
+        const date=modal.root.querySelector(`.schedule-add-date[data-category-id="${categoryId}"]`)?.value||'';
+        return {categoryId,plannedDeliveryDate:date};
+      });
+      const missing=items.find(x=>!x.plannedDeliveryDate);
+      if(missing){modal.root.querySelector(`.schedule-add-date[data-category-id="${missing.categoryId}"]`)?.focus();throw new Error('请为所有已选择类别设置计划交付日期。');}
+      await createDeliveryPlans(Number(data.selectedProjectId),items);
+      close();toast(`已添加 ${items.length} 条交付计划。`);await onSaved();
+    }
+  });
+  modal.root.classList.add('schedule-plan-modal');
+  const refreshGroupCheck=typeId=>{
+    const rows=[...modal.root.querySelectorAll(`.schedule-add-row[data-type-id="${typeId}"]:not(.hidden)` )];
+    const groupCheck=modal.root.querySelector(`.schedule-add-group-check[data-type-id="${typeId}"]`);
+    if(!groupCheck||!rows.length)return;
+    const checks=rows.map(row=>row.querySelector('.schedule-add-check'));
+    groupCheck.checked=checks.every(x=>x.checked);
+    groupCheck.indeterminate=!groupCheck.checked&&checks.some(x=>x.checked);
+  };
+  modal.root.querySelectorAll('.schedule-add-group-check').forEach(check=>check.onchange=()=>{
+    const typeId=check.dataset.typeId;
+    modal.root.querySelectorAll(`.schedule-add-row[data-type-id="${typeId}"]:not(.hidden) .schedule-add-check`).forEach(x=>x.checked=check.checked);
+  });
+  modal.root.querySelectorAll('.schedule-add-group-date').forEach(input=>input.onchange=()=>{
+    if(!input.value)return;
+    const typeId=input.dataset.typeId;
+    modal.root.querySelectorAll(`.schedule-add-row[data-type-id="${typeId}"]`).forEach(row=>{
+      row.querySelector('.schedule-add-check').checked=true;
+      row.querySelector('.schedule-add-date').value=input.value;
+    });
+    refreshGroupCheck(typeId);
+  });
+  modal.root.querySelectorAll('.schedule-add-check').forEach(check=>check.onchange=()=>refreshGroupCheck(check.closest('.schedule-add-row').dataset.typeId));
+  modal.root.querySelectorAll('.schedule-add-date').forEach(input=>input.onchange=()=>{
+    if(input.value)input.closest('.schedule-add-row').querySelector('.schedule-add-check').checked=true;
+    refreshGroupCheck(input.closest('.schedule-add-row').dataset.typeId);
+  });
+  byId('schedule-add-search').oninput=event=>{
+    const keyword=event.target.value.trim().toLowerCase();
+    modal.root.querySelectorAll('.schedule-add-row').forEach(row=>row.classList.toggle('hidden',keyword&&!row.dataset.search.includes(keyword)));
+    modal.root.querySelectorAll('.schedule-add-group').forEach(group=>{
+      const visible=[...group.querySelectorAll('.schedule-add-row')].some(row=>!row.classList.contains('hidden'));
+      group.classList.toggle('hidden',!visible);
+      if(visible)refreshGroupCheck(group.dataset.addGroup);
+    });
+  };
+}
+
 async function renderDeliverySchedules(initialStatus=''){
-  setPage('交付计划','按车型集中编排交付节点，并自动识别到期与延期状态');
+  setPage('交付计划','按车型定义应交付类别和计划节点，自动匹配台账实际交付结果');
   state.scheduleProjectId ||= null;
   state.scheduleStatusFilter=initialStatus||state.scheduleStatusFilter||'';
+  state.scheduleKeyword ??='';
   const query=state.scheduleProjectId?`?projectId=${state.scheduleProjectId}`:'';
   const data=await api(`/internal/delivery-schedules${query}`);
   state.scheduleProjectId=data.selectedProjectId||null;
   const canEdit=hasPermission('DELIVERY_SCHEDULE_EDIT');
   const projectOptions=(data.projects||[]).map(p=>`<option value="${p.id}" ${Number(p.id)===Number(data.selectedProjectId)?'selected':''}>${esc(p.vehicleModel?`${p.vehicleModel} · ${p.name}`:p.name)}</option>`).join('');
-  const filters=[['','全部状态'],['UNSET','仅看未设置'],['DUE_SOON','即将到期'],['OVERDUE_UNDELIVERED','延期未交付'],['LATE_DELIVERED','延期交付'],['ON_TIME_DELIVERED','正常交付'],['UPCOMING','未到期']];
-  const filterOptions=filters.map(([v,n])=>`<option value="${v}" ${state.scheduleStatusFilter===v?'selected':''}>${n}</option>`).join('');
-  const visible=(data.items||[]).filter(x=>!state.scheduleStatusFilter||x.status===state.scheduleStatusFilter);
-  const groups=[];for(const row of visible){let g=groups.find(x=>x.typeId===row.typeId);if(!g){g={typeId:row.typeId,typeName:row.typeName,items:[]};groups.push(g);}g.items.push(row);}
-  const stat=(label,value,status,help)=>`<button type="button" class="stat-card" data-schedule-status="${status}" style="text-align:left;border:0;cursor:pointer"><span>${esc(label)}</span><strong>${Number(value||0)}</strong><small>${esc(help)}</small></button>`;
+  const filters=[['','全部状态'],['DUE_SOON','即将到期'],['OVERDUE_UNDELIVERED','延期未交付'],['LATE_DELIVERED','延期交付'],['ON_TIME_DELIVERED','正常交付'],['UPCOMING','未到期']];
+  const filterOptions=filters.map(([value,name])=>`<option value="${value}" ${state.scheduleStatusFilter===value?'selected':''}>${name}</option>`).join('');
+  const keyword=state.scheduleKeyword.trim().toLowerCase();
+  const visible=(data.items||[]).filter(x=>(!state.scheduleStatusFilter||x.status===state.scheduleStatusFilter)&&(!keyword||`${x.typeName} ${x.categoryName} ${x.categoryCode}`.toLowerCase().includes(keyword)));
+  const groups=groupDeliveryPlanItems(visible);
+  const stat=(label,value,status,help)=>`<button type="button" class="schedule-stat ${state.scheduleStatusFilter===status&&status?'active':''}" data-schedule-status="${status}"><span>${esc(label)}</span><strong>${Number(value||0)}</strong><small>${esc(help)}</small></button>`;
+  const rows=groups.length?groups.map(group=>`<tr class="schedule-group-row"><td>${canEdit?`<input type="checkbox" class="schedule-group-main-check" data-type-id="${group.typeId}" title="选择本组">`:''}</td><td colspan="6"><strong>${esc(group.typeName)}</strong><span>${group.items.length} 项</span></td></tr>${group.items.map(row=>`<tr data-schedule-row="${row.id}" data-type-id="${row.typeId}">
+    <td>${canEdit?`<input type="checkbox" class="schedule-row-check" value="${row.id}">`:''}</td>
+    <td><div class="schedule-category"><strong>${esc(row.categoryName)}</strong><small>${esc(row.categoryCode)}</small></div></td>
+    <td>${canEdit?`<input type="date" class="schedule-date-input" data-id="${row.id}" value="${esc(row.plannedDeliveryDate)}">`:esc(row.plannedDeliveryDate)}</td>
+    <td><div class="schedule-actual"><strong>${esc(row.actualDeliveryDate?String(row.actualDeliveryDate).slice(0,10):'—')}</strong><small>${row.matchedDeliverables?`匹配 ${row.matchedDeliverables} 条台账`:'尚无对应台账'}</small></div></td>
+    <td>${deliveryScheduleBadge(row)}</td>
+    <td><span class="muted">${esc(row.typeCode)}</span></td>
+    <td>${canEdit?`<button type="button" class="btn btn-light btn-sm schedule-delete-one" data-id="${row.id}" data-name="${esc(row.categoryName)}">删除</button>`:'—'}</td>
+  </tr>`).join('')}`).join(''):`<tr><td colspan="7"><div class="schedule-empty"><strong>${(data.items||[]).length?'没有符合当前筛选条件的计划项':'当前车型尚未配置交付计划'}</strong><span>${(data.items||[]).length?'可清除筛选条件后继续查看。':'添加交付物类别并同时设置计划日期即可开始跟踪。'}</span>${canEdit&&!(data.items||[]).length?'<button type="button" class="btn btn-primary" id="schedule-empty-add">+ 添加交付计划</button>':''}</div></td></tr>`;
+
   content.innerHTML=`
-    <section class="card" style="margin-bottom:18px"><div class="card-body">
-      <div class="filter-bar" style="align-items:end">
-        <div class="field" style="min-width:260px"><label>车型 / 项目</label><select id="schedule-project">${projectOptions}</select></div>
-        <div class="field" style="min-width:180px"><label>状态筛选</label><select id="schedule-status-filter">${filterOptions}</select></div>
-        <div style="margin-left:auto" class="muted">预警窗口：计划日期前 ${data.warningDays} 天</div>
-      </div>
-    </div></section>
-    <section class="stat-grid" style="margin-bottom:18px">
-      ${stat('交付物总数',data.summary.total,'','项')}
-      ${stat('已设置',data.summary.configured,'','项')}
-      ${stat('未设置',data.summary.unset,'UNSET','项')}
+    <section class="card schedule-control-card"><div class="card-body"><div class="schedule-controls">
+      <div class="field schedule-project-field"><label>当前车型</label><select id="schedule-project">${projectOptions}</select></div>
+      <div class="field schedule-search-field"><label>快速查找</label><input id="schedule-search" value="${esc(state.scheduleKeyword)}" placeholder="搜索交付物类型 / 类别"></div>
+      <div class="field schedule-filter-field"><label>状态</label><select id="schedule-status-filter">${filterOptions}</select></div>
+      <div class="schedule-control-meta"><span>提前 ${data.warningDays} 天预警</span>${canEdit?'<button type="button" id="schedule-add" class="btn btn-primary">+ 添加交付计划</button>':''}</div>
+    </div></div></section>
+    <section class="schedule-stats">
+      ${stat('计划项',data.summary.total,'','条')}
+      ${stat('可添加类别',data.summary.available,'','个')}
       ${stat('即将到期',data.summary.dueSoon,'DUE_SOON','项')}
       ${stat('延期未交付',data.summary.overdueUndelivered,'OVERDUE_UNDELIVERED','项')}
       ${stat('延期交付',data.summary.lateDelivered,'LATE_DELIVERED','项')}
       ${stat('正常交付',data.summary.onTimeDelivered,'ON_TIME_DELIVERED','项')}
     </section>
-    <section class="card"><div class="card-head"><div><h3>交付物计划</h3><p class="muted section-note">实际交付日期取该交付物第一个版本的创建时间，与版本是否正式发布无关。</p></div>${canEdit?'<div class="inline-actions"><button type="button" id="schedule-bulk-set" class="btn btn-primary" disabled>批量设置日期</button><button type="button" id="schedule-bulk-clear" class="btn btn-light" disabled>清除日期</button></div>':''}</div>
-      <div class="table-wrap"><table><thead><tr><th style="width:38px">${canEdit?'<input type="checkbox" id="schedule-check-all">':''}</th><th>交付物</th><th>类别</th><th>责任人</th><th>计划交付日期</th><th>实际交付日期</th><th>状态</th></tr></thead><tbody>
-      ${groups.length?groups.map(g=>`<tr><td colspan="7" style="background:#f8fafc"><div style="display:flex;align-items:center;justify-content:space-between"><strong>${esc(g.typeName)}（${g.items.length}）</strong>${canEdit?`<button type="button" class="btn btn-light btn-sm" data-group-set="${g.typeId}">设置整组日期</button>`:''}</div></td></tr>${g.items.map(x=>`<tr data-schedule-row="${x.id}"><td>${canEdit?`<input type="checkbox" class="schedule-row-check" value="${x.id}">`:''}</td><td><strong>${esc(x.name)}</strong><small style="display:block" class="muted">${esc(x.code)}</small></td><td>${esc(x.categoryName)}</td><td>${esc(x.responsiblePerson||'—')}</td><td>${canEdit?`<input type="date" class="schedule-date-input" data-id="${x.id}" value="${esc(x.plannedDeliveryDate||'')}" style="min-width:145px">`:esc(x.plannedDeliveryDate||'—')}</td><td>${esc(x.actualDeliveryDate?String(x.actualDeliveryDate).slice(0,10):'—')}</td><td>${deliveryScheduleBadge(x)}</td></tr>`).join('')}`).join(''):'<tr><td colspan="7"><div class="empty">当前筛选条件下没有交付物。</div></td></tr>'}
-      </tbody></table></div></section>`;
-  byId('schedule-project')?.addEventListener('change',async e=>{state.scheduleProjectId=Number(e.target.value)||null;state.scheduleStatusFilter='';await renderDeliverySchedules('');});
-  byId('schedule-status-filter')?.addEventListener('change',async e=>{state.scheduleStatusFilter=e.target.value;await renderDeliverySchedules(e.target.value);});
-  content.querySelectorAll('[data-schedule-status]').forEach(b=>b.onclick=async()=>{state.scheduleStatusFilter=b.dataset.scheduleStatus||'';await renderDeliverySchedules(state.scheduleStatusFilter);});
+    <section class="card schedule-table-card"><div class="card-head"><div><h3>车型交付计划</h3><p class="muted section-note">每条计划代表“车型 × 交付物类别”。实际交付日期自动取该车型、该类别对应台账中最早的首个版本创建时间。</p></div>${canEdit?'<div class="schedule-selection-actions"><span id="schedule-selected-count">未选择</span><button type="button" id="schedule-bulk-set" class="btn btn-light btn-sm" disabled>批量改期</button><button type="button" id="schedule-bulk-delete" class="btn btn-light btn-sm" disabled>批量删除</button></div>':''}</div>
+      <div class="table-wrap"><table class="schedule-table"><thead><tr><th style="width:42px">${canEdit?'<input type="checkbox" id="schedule-check-all" title="全选当前结果">':''}</th><th>交付物类别</th><th>计划交付日期</th><th>实际首次交付</th><th>交付状态</th><th>类型</th><th style="width:88px">操作</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </section>`;
+
+  byId('schedule-project')?.addEventListener('change',async event=>{state.scheduleProjectId=Number(event.target.value)||null;state.scheduleStatusFilter='';state.scheduleKeyword='';await renderDeliverySchedules('');});
+  byId('schedule-status-filter')?.addEventListener('change',async event=>{state.scheduleStatusFilter=event.target.value;await renderDeliverySchedules(event.target.value);});
+  byId('schedule-search')?.addEventListener('input',event=>{state.scheduleKeyword=event.target.value;clearTimeout(state.scheduleSearchTimer);state.scheduleSearchTimer=setTimeout(()=>renderDeliverySchedules(state.scheduleStatusFilter),180);});
+  content.querySelectorAll('[data-schedule-status]').forEach(button=>button.onclick=async()=>{state.scheduleStatusFilter=button.dataset.scheduleStatus||'';await renderDeliverySchedules(state.scheduleStatusFilter);});
   if(!canEdit)return;
-  const checks=()=>[...content.querySelectorAll('.schedule-row-check:checked')].map(x=>Number(x.value));
-  const refreshButtons=()=>{const ids=checks();byId('schedule-bulk-set').disabled=!ids.length;byId('schedule-bulk-clear').disabled=!ids.length;};
-  content.querySelectorAll('.schedule-row-check').forEach(x=>x.onchange=refreshButtons);
-  byId('schedule-check-all')?.addEventListener('change',e=>{content.querySelectorAll('.schedule-row-check').forEach(x=>x.checked=e.target.checked);refreshButtons();});
-  content.querySelectorAll('.schedule-date-input').forEach(input=>input.onchange=async()=>{try{await saveDeliverySchedule([Number(input.dataset.id)],input.value||null);toast(input.value?'计划交付日期已更新。':'计划交付日期已清除。');await renderDeliverySchedules(state.scheduleStatusFilter);}catch(error){toast(error.message,'error');await renderDeliverySchedules(state.scheduleStatusFilter);}});
-  content.querySelectorAll('[data-group-set]').forEach(button=>button.onclick=()=>{const ids=(data.items||[]).filter(x=>x.typeId===Number(button.dataset.groupSet)).map(x=>x.id);openBulkScheduleDate(ids,()=>renderDeliverySchedules(state.scheduleStatusFilter),`设置${button.closest('tr').querySelector('strong').textContent}日期`);});
-  byId('schedule-bulk-set').onclick=()=>openBulkScheduleDate(checks(),()=>renderDeliverySchedules(state.scheduleStatusFilter));
-  byId('schedule-bulk-clear').onclick=async()=>{const ids=checks();const result=await confirmAction('清除计划交付日期',`确认清除已选择的 ${ids.length} 项计划日期吗？`,{submitText:'确认清除',danger:true});if(!result.confirmed)return;await saveDeliverySchedule(ids,null);toast(`已清除 ${ids.length} 项计划日期。`);await renderDeliverySchedules(state.scheduleStatusFilter);};
+
+  const refresh=()=>renderDeliverySchedules(state.scheduleStatusFilter);
+  byId('schedule-add')?.addEventListener('click',()=>openAddDeliveryPlans(data,refresh));
+  byId('schedule-empty-add')?.addEventListener('click',()=>openAddDeliveryPlans(data,refresh));
+  const selectedIds=()=>[...content.querySelectorAll('.schedule-row-check:checked')].map(x=>Number(x.value));
+  const refreshSelection=()=>{
+    const ids=selectedIds();
+    byId('schedule-selected-count').textContent=ids.length?`已选择 ${ids.length} 项`:'未选择';
+    byId('schedule-bulk-set').disabled=!ids.length;
+    byId('schedule-bulk-delete').disabled=!ids.length;
+    content.querySelectorAll('.schedule-group-main-check').forEach(groupCheck=>{
+      const checks=[...content.querySelectorAll(`tr[data-type-id="${groupCheck.dataset.typeId}"] .schedule-row-check`)];
+      groupCheck.checked=checks.length>0&&checks.every(x=>x.checked);
+      groupCheck.indeterminate=!groupCheck.checked&&checks.some(x=>x.checked);
+    });
+  };
+  content.querySelectorAll('.schedule-row-check').forEach(check=>check.onchange=refreshSelection);
+  content.querySelectorAll('.schedule-group-main-check').forEach(check=>check.onchange=()=>{content.querySelectorAll(`tr[data-type-id="${check.dataset.typeId}"] .schedule-row-check`).forEach(x=>x.checked=check.checked);refreshSelection();});
+  byId('schedule-check-all')?.addEventListener('change',event=>{content.querySelectorAll('.schedule-row-check').forEach(x=>x.checked=event.target.checked);refreshSelection();});
+  content.querySelectorAll('.schedule-date-input').forEach(input=>input.onchange=async()=>{
+    const previous=(data.items||[]).find(x=>Number(x.id)===Number(input.dataset.id))?.plannedDeliveryDate||'';
+    if(!input.value){input.value=previous;toast('计划项必须保留计划交付日期；如不再跟踪请使用“删除”。','error');return;}
+    input.disabled=true;
+    try{await updateDeliveryPlanDates([Number(input.dataset.id)],input.value);toast('计划交付日期已更新。');await refresh();}
+    catch(error){toast(error.message,'error');input.value=previous;input.disabled=false;}
+  });
+  byId('schedule-bulk-set').onclick=()=>openBulkPlanDate(selectedIds(),refresh);
+  const deleteSelected=async ids=>{
+    const result=await confirmAction('删除交付计划',`确认删除已选择的 ${ids.length} 条车型交付计划吗？仅删除计划项，不会删除交付物类别或台账数据。`,{submitText:'确认删除',danger:true});
+    if(!result.confirmed)return;
+    await deleteDeliveryPlans(ids);toast(`已删除 ${ids.length} 条交付计划。`);await refresh();
+  };
+  byId('schedule-bulk-delete').onclick=()=>deleteSelected(selectedIds());
+  content.querySelectorAll('.schedule-delete-one').forEach(button=>button.onclick=async()=>{
+    const result=await confirmAction('删除交付计划',`确认删除“${button.dataset.name}”的车型交付计划吗？不会删除基础类别或交付物台账。`,{submitText:'确认删除',danger:true});
+    if(!result.confirmed)return;
+    await deleteDeliveryPlans([Number(button.dataset.id)]);toast('交付计划已删除。');await refresh();
+  });
 }
