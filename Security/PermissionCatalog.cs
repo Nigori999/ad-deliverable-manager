@@ -53,6 +53,10 @@ public static class PermissionCatalog
     public const string MasterDataCreate = "MASTERDATA_CREATE";
     public const string MasterDataEdit = "MASTERDATA_EDIT";
     public const string MasterDataDelete = "MASTERDATA_DELETE";
+    public const string DictionaryView = "DICTIONARY_VIEW";
+    public const string DictionaryCreate = "DICTIONARY_CREATE";
+    public const string DictionaryEdit = "DICTIONARY_EDIT";
+    public const string DictionaryDelete = "DICTIONARY_DELETE";
     public const string UserView = "USER_VIEW";
     public const string UserCreate = "USER_CREATE";
     public const string UserEdit = "USER_EDIT";
@@ -114,6 +118,10 @@ public static class PermissionCatalog
         (MasterDataCreate, "新增基础数据", "系统管理"),
         (MasterDataEdit, "编辑基础数据", "系统管理"),
         (MasterDataDelete, "删除基础数据", "系统管理"),
+        (DictionaryView, "查看字典", "系统管理"),
+        (DictionaryCreate, "新增字典及字典项", "系统管理"),
+        (DictionaryEdit, "编辑字典及字典项", "系统管理"),
+        (DictionaryDelete, "删除字典及字典项", "系统管理"),
         (UserView, "查看用户", "系统管理"),
         (UserCreate, "新增用户", "系统管理"),
         (UserEdit, "编辑用户", "系统管理"),
