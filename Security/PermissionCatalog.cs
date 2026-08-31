@@ -49,6 +49,10 @@ public static class PermissionCatalog
 
     public const string DashboardView = "DASHBOARD_VIEW";
     public const string AnalyticsView = "ANALYTICS_VIEW";
+    public const string IssueView = "ISSUE_VIEW";
+    public const string IssueCreate = "ISSUE_CREATE";
+    public const string IssueEdit = "ISSUE_EDIT";
+    public const string IssueDelete = "ISSUE_DELETE";
     public const string MasterDataView = "MASTERDATA_VIEW";
     public const string MasterDataCreate = "MASTERDATA_CREATE";
     public const string MasterDataEdit = "MASTERDATA_EDIT";
@@ -114,6 +118,10 @@ public static class PermissionCatalog
         (ChangeClose, "关闭变更", "变更管理"),
         (DashboardView, "查看仪表盘", "概览分析"),
         (AnalyticsView, "查看完整度分析", "概览分析"),
+        (IssueView, "查看问题驾驶舱", "问题管理"),
+        (IssueCreate, "录入问题汇总", "问题管理"),
+        (IssueEdit, "编辑问题汇总", "问题管理"),
+        (IssueDelete, "删除问题汇总", "问题管理"),
         (MasterDataView, "查看基础数据", "系统管理"),
         (MasterDataCreate, "新增基础数据", "系统管理"),
         (MasterDataEdit, "编辑基础数据", "系统管理"),

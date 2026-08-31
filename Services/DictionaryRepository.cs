@@ -7,6 +7,10 @@ namespace AdDeliverableManager.Services;
 public sealed class DictionaryRepository
 {
     public const string DeliverableCategory = "DELIVERABLE_CATEGORY";
+    public const string IssueDepartment = "ISSUE_DEPARTMENT";
+    public const string IssueSource = "ISSUE_SOURCE";
+    public const string IssueSeverity = "ISSUE_SEVERITY";
+    public const string IssueStatus = "ISSUE_STATUS";
     public const string ScopeNone = "NONE";
     public const string ScopeDeliverableType = "DELIVERABLE_TYPE";
     public const string StructureFlat = "FLAT";
@@ -71,7 +75,13 @@ public sealed class DictionaryRepository
         command.CommandText = """
             SELECT i.Id,i.ItemCode,i.ItemName,i.ScopeType,i.ScopeValue,i.ParentItemId,i.SortOrder,i.Remark,i.IsEnabled,
                    d.Code,d.Name,d.ScopeMode,
-                   CASE WHEN d.Code='DELIVERABLE_CATEGORY' THEN (SELECT COUNT(*) FROM Deliverables x WHERE x.CategoryId=i.Id) ELSE 0 END,
+                   CASE d.Code
+                       WHEN 'DELIVERABLE_CATEGORY' THEN (SELECT COUNT(*) FROM Deliverables x WHERE x.CategoryId=i.Id)
+                       WHEN 'ISSUE_DEPARTMENT' THEN (SELECT COUNT(*) FROM IssueSnapshots x WHERE x.DepartmentItemId=i.Id)
+                       WHEN 'ISSUE_SOURCE' THEN (SELECT COUNT(*) FROM IssueSnapshots x WHERE x.SourceItemId=i.Id)
+                       WHEN 'ISSUE_SEVERITY' THEN (SELECT COUNT(*) FROM IssueSnapshots x WHERE x.SeverityItemId=i.Id)
+                       WHEN 'ISSUE_STATUS' THEN (SELECT COUNT(*) FROM IssueSnapshotCounts x WHERE x.StatusItemId=i.Id)
+                       ELSE 0 END,
                    (SELECT COUNT(*) FROM DictionaryItems child WHERE child.ParentItemId=i.Id AND child.IsEnabled=1)
             FROM DictionaryItems i JOIN DictionaryTypes d ON d.Id=i.DictionaryTypeId
             WHERE d.Id=$typeId AND i.IsEnabled=1 AND ($scopeMode='NONE' OR i.ScopeValue=$scopeValue)
@@ -358,10 +368,17 @@ public sealed class DictionaryRepository
 
     private static async Task<int> GetUsageCountAsync(SqliteConnection connection, SqliteTransaction transaction, string dictionaryCode, int itemId, CancellationToken ct)
     {
-        if (!dictionaryCode.Equals(DeliverableCategory, StringComparison.OrdinalIgnoreCase)) return 0;
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT COUNT(*) FROM Deliverables WHERE CategoryId=$id";
+        command.CommandText = dictionaryCode.ToUpperInvariant() switch
+        {
+            DeliverableCategory => "SELECT COUNT(*) FROM Deliverables WHERE CategoryId=$id",
+            IssueDepartment => "SELECT COUNT(*) FROM IssueSnapshots WHERE DepartmentItemId=$id",
+            IssueSource => "SELECT COUNT(*) FROM IssueSnapshots WHERE SourceItemId=$id",
+            IssueSeverity => "SELECT COUNT(*) FROM IssueSnapshots WHERE SeverityItemId=$id",
+            IssueStatus => "SELECT COUNT(*) FROM IssueSnapshotCounts WHERE StatusItemId=$id",
+            _ => "SELECT 0"
+        };
         command.Parameters.AddValue("$id", itemId);
         return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
     }
