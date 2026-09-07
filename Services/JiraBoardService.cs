@@ -350,7 +350,7 @@ public sealed partial class JiraBoardService
         foreach (var change in statusChanges)
         {
             if (change.Created < createdAt) continue;
-            var newStage = StageFor(change.ToString);
+            var newStage = StageFor(change.ToValue);
             if (!newStage.Equals(activeStage, StringComparison.OrdinalIgnoreCase))
             {
                 if (activeStage != "other")
@@ -430,7 +430,7 @@ public sealed partial class JiraBoardService
     {
         if (changes.Count == 0) return current;
         var before = changes.Where(x => x.Created <= cutoff).OrderBy(x => x.Created).LastOrDefault();
-        if (before is not null) return before.ToString ?? current;
+        if (before is not null) return before.ToValue ?? current;
         return changes.OrderBy(x => x.Created).First().FromString ?? current;
     }
 
@@ -669,7 +669,7 @@ public sealed partial class JiraBoardService
     private sealed record ConnectionSettings(string BaseUrl, string Username, string Password, string ProjectKey);
     private sealed record StageDefinition(string Code, string Name, int Order);
     private sealed record FieldMeta(string Id, string Name, string Clause, bool Custom, bool Searchable, string? SchemaType);
-    private sealed record ChangeValue(DateTimeOffset Created, string FieldId, string? FromString, string? ToString);
+    private sealed record ChangeValue(DateTimeOffset Created, string FieldId, string? FromString, string? ToValue);
     private sealed record CommentValue(string? Body, string? Author, DateTimeOffset? Created);
     private sealed record AnalyzedIssue(
         string Key, string Summary, string Url, string Status, string StageCode, string StageName, string Assignee,
