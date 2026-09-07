@@ -30,6 +30,7 @@ builder.Services.AddScoped<PermissionRepository>();
 builder.Services.AddScoped<PermissionUserRepository>();
 builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<DictionaryRepository>();
+builder.Services.AddScoped<IssueManagementRepository>();
 builder.Services.AddScoped<DeliverableRepository>();
 builder.Services.AddScoped<ProductBaselineRepository>();
 builder.Services.AddScoped<ProductBaselineChangeService>();

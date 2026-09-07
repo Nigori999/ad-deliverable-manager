@@ -49,10 +49,18 @@ public static class PermissionCatalog
 
     public const string DashboardView = "DASHBOARD_VIEW";
     public const string AnalyticsView = "ANALYTICS_VIEW";
+    public const string IssueView = "ISSUE_VIEW";
+    public const string IssueCreate = "ISSUE_CREATE";
+    public const string IssueEdit = "ISSUE_EDIT";
+    public const string IssueDelete = "ISSUE_DELETE";
     public const string MasterDataView = "MASTERDATA_VIEW";
     public const string MasterDataCreate = "MASTERDATA_CREATE";
     public const string MasterDataEdit = "MASTERDATA_EDIT";
     public const string MasterDataDelete = "MASTERDATA_DELETE";
+    public const string DictionaryView = "DICTIONARY_VIEW";
+    public const string DictionaryCreate = "DICTIONARY_CREATE";
+    public const string DictionaryEdit = "DICTIONARY_EDIT";
+    public const string DictionaryDelete = "DICTIONARY_DELETE";
     public const string UserView = "USER_VIEW";
     public const string UserCreate = "USER_CREATE";
     public const string UserEdit = "USER_EDIT";
@@ -110,10 +118,18 @@ public static class PermissionCatalog
         (ChangeClose, "关闭变更", "变更管理"),
         (DashboardView, "查看仪表盘", "概览分析"),
         (AnalyticsView, "查看完整度分析", "概览分析"),
+        (IssueView, "查看问题驾驶舱", "问题管理"),
+        (IssueCreate, "录入问题汇总", "问题管理"),
+        (IssueEdit, "编辑问题汇总", "问题管理"),
+        (IssueDelete, "删除问题汇总", "问题管理"),
         (MasterDataView, "查看基础数据", "系统管理"),
         (MasterDataCreate, "新增基础数据", "系统管理"),
         (MasterDataEdit, "编辑基础数据", "系统管理"),
         (MasterDataDelete, "删除基础数据", "系统管理"),
+        (DictionaryView, "查看字典", "系统管理"),
+        (DictionaryCreate, "新增字典及字典项", "系统管理"),
+        (DictionaryEdit, "编辑字典及字典项", "系统管理"),
+        (DictionaryDelete, "删除字典及字典项", "系统管理"),
         (UserView, "查看用户", "系统管理"),
         (UserCreate, "新增用户", "系统管理"),
         (UserEdit, "编辑用户", "系统管理"),
