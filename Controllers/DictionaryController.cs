@@ -15,7 +15,11 @@ public sealed class DictionaryController : ControllerBase
     public DictionaryController(DictionaryRepository repository) => _repository = repository;
 
     [HttpGet]
-    public async Task<IActionResult> ListTypes(CancellationToken ct) => Ok(new { items = await _repository.ListTypesAsync(ct) });
+    public async Task<IActionResult> ListTypes(CancellationToken ct) => Ok(new
+    {
+        items = await _repository.ListTypesAsync(ct),
+        scopeOptions = new { deliverableTypes = await _repository.ListDeliverableTypeScopesAsync(ct) }
+    });
 
     [HttpGet("{code}")]
     public async Task<IActionResult> GetItems(string code, [FromQuery] string? scopeValue, CancellationToken ct)
@@ -23,7 +27,7 @@ public sealed class DictionaryController : ControllerBase
         try
         {
             var type = await _repository.GetTypeAsync(code, ct);
-            if (type is null) return NotFound(new { message = "字典类型不存在或已停用。" });
+            if (type is null) return NotFound(new { message = "字典不存在。" });
             return Ok(new { dictionary = type, items = await _repository.ListItemsAsync(code, scopeValue, ct) });
         }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
@@ -33,7 +37,7 @@ public sealed class DictionaryController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateType([FromBody] DictionaryTypeRequest request, CancellationToken ct)
     {
-        try { return Ok(new { id = await _repository.CreateTypeAsync(request, User.GetDisplayName(), ct), message = "字典类型已新增。" }); }
+        try { return Ok(new { id = await _repository.CreateTypeAsync(request, User.GetDisplayName(), ct), message = "字典已新增。" }); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
         catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
     }
@@ -41,7 +45,7 @@ public sealed class DictionaryController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<IActionResult> UpdateType(int id, [FromBody] DictionaryTypeRequest request, CancellationToken ct)
     {
-        try { await _repository.UpdateTypeAsync(id, request, User.GetDisplayName(), ct); return Ok(new { message = "字典类型已更新。" }); }
+        try { await _repository.UpdateTypeAsync(id, request, User.GetDisplayName(), ct); return Ok(new { message = "字典已更新。" }); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
         catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
         catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
@@ -50,7 +54,7 @@ public sealed class DictionaryController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteType(int id, CancellationToken ct)
     {
-        try { await _repository.DeleteTypeAsync(id, User.GetDisplayName(), ct); return Ok(new { message = "字典类型已删除。" }); }
+        try { await _repository.DeleteTypeAsync(id, User.GetDisplayName(), ct); return Ok(new { message = "字典已删除。" }); }
         catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
         catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
     }

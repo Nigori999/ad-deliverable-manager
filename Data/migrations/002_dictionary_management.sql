@@ -1,0 +1,3 @@
+ALTER TABLE DictionaryTypes
+ADD COLUMN StructureMode TEXT NOT NULL DEFAULT 'FLAT'
+CHECK(StructureMode IN ('FLAT','TREE'));

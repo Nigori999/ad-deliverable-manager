@@ -26,6 +26,7 @@ CREATE INDEX IF NOT EXISTS IX_UserRoles_User ON UserRoles(UserId);CREATE INDEX I
         var catalogCodes = string.Join(",", PermissionCatalog.All.Select(x => $"'{x.Code.Replace("'", "''")}'"));
         await using var permissionCleanup = c.CreateCommand(); permissionCleanup.CommandText = $"DELETE FROM Permissions WHERE Code NOT IN ({catalogCodes})"; await permissionCleanup.ExecuteNonQueryAsync(ct);
         await SeedPermissionsAsync(c, ct);
+        await MigrateDictionaryPermissionsAsync(c, ct);
         var systemRoleId = await EnsureSystemAdminRoleAsync(c, ct);
         await EnsureSystemAdminPolicyAsync(c, systemRoleId, ct);
     }
@@ -39,6 +40,50 @@ CREATE INDEX IF NOT EXISTS IX_UserRoles_User ON UserRoles(UserId);CREATE INDEX I
             cmd.Parameters.AddWithValue("$code", permission.Code); cmd.Parameters.AddWithValue("$name", permission.Name); cmd.Parameters.AddWithValue("$category", permission.Category);
             await cmd.ExecuteNonQueryAsync(ct);
         }
+    }
+
+    private static async Task MigrateDictionaryPermissionsAsync(Microsoft.Data.Sqlite.SqliteConnection c, CancellationToken ct)
+    {
+        await using (var create = c.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE IF NOT EXISTS PermissionSchemaMigrations(MigrationId TEXT PRIMARY KEY,AppliedAt TEXT NOT NULL)";
+            await create.ExecuteNonQueryAsync(ct);
+        }
+        await using (var exists = c.CreateCommand())
+        {
+            exists.CommandText = "SELECT COUNT(*) FROM PermissionSchemaMigrations WHERE MigrationId='001_DICTIONARY_PERMISSIONS'";
+            if (Convert.ToInt32(await exists.ExecuteScalarAsync(ct)) > 0) return;
+        }
+
+        var mappings = new[]
+        {
+            (PermissionCatalog.MasterDataView, PermissionCatalog.DictionaryView),
+            (PermissionCatalog.MasterDataCreate, PermissionCatalog.DictionaryCreate),
+            (PermissionCatalog.MasterDataEdit, PermissionCatalog.DictionaryEdit),
+            (PermissionCatalog.MasterDataDelete, PermissionCatalog.DictionaryDelete)
+        };
+        using var transaction = c.BeginTransaction();
+        foreach (var (source, target) in mappings)
+        {
+            await using var command = c.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT OR IGNORE INTO RolePermissions(RoleId,PermissionId)
+                SELECT rp.RoleId,target.Id
+                FROM RolePermissions rp
+                JOIN Permissions source ON source.Id=rp.PermissionId AND source.Code=$source
+                JOIN Permissions target ON target.Code=$target AND target.IsEnabled=1;
+                """;
+            command.Parameters.AddWithValue("$source", source);
+            command.Parameters.AddWithValue("$target", target);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        await using var record = c.CreateCommand();
+        record.Transaction = transaction;
+        record.CommandText = "INSERT INTO PermissionSchemaMigrations(MigrationId,AppliedAt) VALUES('001_DICTIONARY_PERMISSIONS',$now)";
+        record.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O"));
+        await record.ExecuteNonQueryAsync(ct);
+        await transaction.CommitAsync(ct);
     }
 
     private static async Task<int> EnsureSystemAdminRoleAsync(Microsoft.Data.Sqlite.SqliteConnection c, CancellationToken ct)
