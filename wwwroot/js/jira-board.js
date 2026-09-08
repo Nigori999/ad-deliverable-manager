@@ -4,6 +4,7 @@ const jiraStageColors = {
   new: '#6f7f9b', confirm: '#4e7bf2', analysis: '#6b5ce7', action: '#b86fe2',
   verify: '#159eaf', closed: '#21a675', closure: '#e04f64', other: '#a06a46'
 };
+let jiraFieldPickerSequence = 0;
 
 function jiraToday() {
   const now = new Date();
@@ -46,7 +47,7 @@ async function renderJiraBoard() {
           <label><span>账号 *</span><input name="username" autocomplete="username" required></label>
           <label><span>密码 *</span><input name="password" type="password" autocomplete="current-password" required></label>
           <label><span>统计截止日期 *</span><input name="cutoffDate" type="date" value="${jiraToday()}" max="${jiraToday()}" required></label>
-          <label class="jira-severity-field"><span>严重等级字段 *</span><input name="severityFieldSearch" placeholder="搜索字段名称或ID" autocomplete="off" disabled><select name="severityFieldId" disabled><option value="">连接后选择字段</option></select></label>
+          <div class="jira-config-field jira-severity-field"><label for="jira-severity-field-input">严重等级字段 *</label><div id="jira-severity-field-host">${jiraFieldPickerHtml('', { name:'severityFieldId', placeholder:'连接后搜索并选择字段', disabled:true, inputId:'jira-severity-field-input' })}</div></div>
         </div>
         <div class="jira-connect-actions">
           <button type="button" class="btn btn-light" id="jira-test-connection">测试连接并加载字段</button>
@@ -89,17 +90,10 @@ async function loadJiraMetadata() {
       form.elements.rawJql.value = '';
       jiraBoardState.currentPresetId = null;
     }
-    const select = form.elements.severityFieldId;
-    select.innerHTML = jiraFieldOptions('', '请选择严重等级字段');
     const candidate = metadata.fields.find(field => field.severityCandidate);
-    if (candidate) select.value = candidate.id;
-    select.disabled = false;
-    form.elements.severityFieldSearch.disabled = false;
-    form.elements.severityFieldSearch.value = '';
-    form.elements.severityFieldSearch.oninput = event => {
-      const selected = select.value;
-      select.innerHTML = jiraFieldOptions(selected, '请选择严重等级字段', event.target.value);
-    };
+    const severityHost = byId('jira-severity-field-host');
+    severityHost.innerHTML = jiraFieldPickerHtml(candidate?.id || '', { name:'severityFieldId', placeholder:'搜索字段名称或ID', inputId:'jira-severity-field-input' });
+    bindJiraFieldPicker(severityHost.firstElementChild, { selectedId:candidate?.id || '', onChange:updateJiraPreview });
     byId('jira-query-builder').classList.remove('hidden');
     byId('jira-run-analysis').disabled = !metadata.standard;
     const transportWarning = connection.baseUrl.toLowerCase().startsWith('http://') ? ' · 注意：HTTP会明文传输Jira凭证' : '';
@@ -131,12 +125,131 @@ async function loadJiraMetadata() {
   }
 }
 
-function jiraFieldOptions(selected = '', emptyLabel = '选择字段', keyword = '') {
-  const term = keyword.trim().toLowerCase();
-  const fields = (jiraBoardState.metadata?.fields || []).filter(field => !term || field.name.toLowerCase().includes(term) || field.id.toLowerCase().includes(term));
-  const selectedField = jiraBoardState.metadata?.fields.find(field => field.id === selected);
-  if (selectedField && !fields.some(field => field.id === selected)) fields.unshift(selectedField);
-  return `<option value="">${esc(emptyLabel)}</option>${fields.map(field => `<option value="${esc(field.id)}" ${field.id === selected ? 'selected' : ''}>${esc(field.name)} · ${esc(field.id)}${field.custom ? ' · 自定义' : ''}</option>`).join('')}`;
+function jiraFieldPickerHtml(selectedId = '', { name = '', placeholder = '搜索字段名称或ID', disabled = false, inputId = '' } = {}) {
+  return `<div class="jira-field-combobox" data-jira-field-picker>
+    <input type="hidden" ${name ? `name="${esc(name)}"` : ''} data-jira-field value="${esc(selectedId)}">
+    <input type="text" ${inputId ? `id="${esc(inputId)}"` : ''} data-jira-field-input placeholder="${esc(placeholder)}" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" ${disabled ? 'disabled' : ''}>
+    <button type="button" data-jira-field-toggle aria-label="展开字段列表" tabindex="-1" ${disabled ? 'disabled' : ''}>⌄</button>
+    <div class="jira-field-options" data-jira-field-options role="listbox" hidden></div>
+  </div>`;
+}
+
+function jiraFieldDisplay(field) {
+  return field ? `${field.name} · ${field.id}${field.custom ? ' · 自定义' : ''}` : '';
+}
+
+function bindJiraFieldPicker(root, { selectedId = '', onChange = null } = {}) {
+  const fields = jiraBoardState.metadata?.fields || [];
+  const hidden = root.querySelector('[data-jira-field]');
+  const input = root.querySelector('[data-jira-field-input]');
+  const toggle = root.querySelector('[data-jira-field-toggle]');
+  const options = root.querySelector('[data-jira-field-options]');
+  const listId = `jira-field-options-${++jiraFieldPickerSequence}`;
+  let visibleFields = [];
+  let activeIndex = -1;
+  let committedId = '';
+  options.id = listId;
+  input.setAttribute('aria-controls', listId);
+
+  const close = () => {
+    options.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+    activeIndex = -1;
+  };
+  const refreshActive = () => {
+    options.querySelectorAll('[data-jira-field-option]').forEach((option, index) => {
+      const active = index === activeIndex;
+      option.classList.toggle('active', active);
+      option.setAttribute('aria-selected', active ? 'true' : 'false');
+      if (active) {
+        input.setAttribute('aria-activedescendant', option.id);
+        option.scrollIntoView({ block:'nearest' });
+      }
+    });
+  };
+  const selectField = (field, notify = true) => {
+    committedId = field?.id || '';
+    hidden.value = committedId;
+    input.value = jiraFieldDisplay(field);
+    close();
+    if (notify) onChange?.(field || null);
+  };
+  const renderOptions = (keyword = '') => {
+    const term = keyword.trim().toLowerCase();
+    const matches = fields.filter(field => !term || field.name.toLowerCase().includes(term) || field.id.toLowerCase().includes(term));
+    visibleFields = matches.slice(0, 80);
+    const selected = fields.find(field => field.id === committedId);
+    if (!term && selected && !visibleFields.some(field => field.id === selected.id)) visibleFields.unshift(selected);
+    options.innerHTML = visibleFields.length
+      ? visibleFields.map((field, index) => `<button type="button" id="${listId}-${index}" role="option" aria-selected="false" data-jira-field-option="${esc(field.id)}"><strong>${esc(field.name)}</strong><small>${esc(field.id)}${field.custom ? ' · 自定义字段' : ''}</small></button>`).join('') + (matches.length > visibleFields.length ? `<div class="jira-field-options-hint">还有 ${matches.length - visibleFields.length} 个字段，请输入关键词缩小范围</div>` : '')
+      : '<div class="jira-field-options-empty">没有匹配的字段</div>';
+    activeIndex = -1;
+    options.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    options.querySelectorAll('[data-jira-field-option]').forEach((option, index) => {
+      option.addEventListener('mousedown', event => event.preventDefault());
+      option.onclick = () => selectField(visibleFields[index]);
+    });
+  };
+
+  root._jiraSetValue = (id, notify = false) => {
+    const field = fields.find(item => item.id === id);
+    selectField(field || null, notify);
+    return Boolean(field);
+  };
+  input.onfocus = () => {
+    input.select();
+    renderOptions('');
+  };
+  input.oninput = () => {
+    hidden.value = '';
+    renderOptions(input.value);
+    onChange?.(null);
+  };
+  input.onkeydown = event => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (options.hidden) renderOptions(hidden.value ? '' : input.value);
+      if (!visibleFields.length) return;
+      activeIndex = event.key === 'ArrowDown'
+        ? (activeIndex + 1) % visibleFields.length
+        : (activeIndex <= 0 ? visibleFields.length - 1 : activeIndex - 1);
+      refreshActive();
+    } else if (event.key === 'Enter' && !options.hidden && activeIndex >= 0) {
+      event.preventDefault();
+      selectField(visibleFields[activeIndex]);
+    } else if (event.key === 'Escape') {
+      const committed = fields.find(field => field.id === committedId);
+      hidden.value = committed?.id || '';
+      input.value = jiraFieldDisplay(committed);
+      close();
+      onChange?.(committed || null);
+    }
+  };
+  input.onblur = () => setTimeout(() => {
+    if (root.contains(document.activeElement)) return;
+    if (!hidden.value) {
+      const typed = input.value.trim().toLowerCase();
+      const exact = fields.find(field => field.id.toLowerCase() === typed || field.name.toLowerCase() === typed || jiraFieldDisplay(field).toLowerCase() === typed);
+      selectField(exact || fields.find(field => field.id === committedId) || null, true);
+    } else input.value = jiraFieldDisplay(fields.find(field => field.id === hidden.value));
+    close();
+  }, 0);
+  toggle.onclick = () => {
+    const wasOpen = !options.hidden;
+    if (wasOpen) close();
+    else {
+      input.focus();
+      input.select();
+      renderOptions('');
+    }
+  };
+  root._jiraSetValue(selectedId);
+}
+
+function setJiraFieldPickerValue(root, fieldId, notify = false) {
+  return root?._jiraSetValue?.(fieldId, notify) || false;
 }
 
 function addJiraCondition(condition = {}) {
@@ -144,23 +257,20 @@ function addJiraCondition(condition = {}) {
   const row = document.createElement('div');
   row.className = 'jira-condition-row';
   row.innerHTML = `
-    <div class="jira-field-picker"><input data-jira-field-search placeholder="搜索字段名称或ID"><select data-jira-field>${jiraFieldOptions(condition.fieldId || '')}</select></div>
+    ${jiraFieldPickerHtml(condition.fieldId || '')}
     <select data-jira-operator><option value="=">等于</option><option value="!=">不等于</option><option value="~">包含</option><option value="!~">不包含</option><option value="IN">属于</option><option value="NOT IN">不属于</option><option value="IS EMPTY">为空</option><option value="IS NOT EMPTY">不为空</option></select>
     <input data-jira-value value="${esc(condition.value || '')}" placeholder="条件值；多值用逗号分隔">
-    <button type="button" aria-label="删除条件">×</button>`;
+    <button type="button" class="jira-condition-remove" aria-label="删除条件">×</button>`;
   row.querySelector('[data-jira-operator]').value = condition.operator || '=';
-  row.querySelector('[data-jira-field-search]').oninput = event => {
-    const select = row.querySelector('[data-jira-field]');
-    const selected = select.value;
-    select.innerHTML = jiraFieldOptions(selected, '选择字段', event.target.value);
-  };
-  row.querySelectorAll('select,input').forEach(element => element.addEventListener('input', updateJiraPreview));
+  bindJiraFieldPicker(row.querySelector('[data-jira-field-picker]'), { selectedId:condition.fieldId || '', onChange:updateJiraPreview });
+  row.querySelector('[data-jira-operator]').addEventListener('input', updateJiraPreview);
+  row.querySelector('[data-jira-value]').addEventListener('input', updateJiraPreview);
   row.querySelector('[data-jira-operator]').addEventListener('change', event => {
     const withoutValue = event.target.value.startsWith('IS ');
     row.querySelector('[data-jira-value]').disabled = withoutValue;
     updateJiraPreview();
   });
-  row.querySelector('button').onclick = () => { row.remove(); updateJiraPreview(); };
+  row.querySelector('.jira-condition-remove').onclick = () => { row.remove(); updateJiraPreview(); };
   row.querySelector('[data-jira-value]').disabled = (condition.operator || '').startsWith('IS ');
   byId('jira-condition-list').appendChild(row);
   updateJiraPreview();
@@ -231,8 +341,8 @@ function applySelectedJiraPreset(event) {
   const preset = jiraBoardState.presets.find(x => x.id === id);
   if (!preset) { updateJiraPresetButtons(); return; }
   const form = byId('jira-board-form');
-  if (jiraBoardState.metadata.fields.some(x => x.id === preset.severityFieldId)) form.elements.severityFieldId.value = preset.severityFieldId;
-  else toast('方案中的严重等级字段在当前Jira项目中不存在，请重新选择。', 'error');
+  const severityPicker = byId('jira-severity-field-host').querySelector('[data-jira-field-picker]');
+  if (!setJiraFieldPickerValue(severityPicker, preset.severityFieldId, true)) toast('方案中的严重等级字段在当前Jira项目中不存在，请重新选择。', 'error');
   byId('jira-condition-list').replaceChildren();
   (preset.conditions || []).forEach(addJiraCondition);
   if (!(preset.conditions || []).length) addJiraCondition();
