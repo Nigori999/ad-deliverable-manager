@@ -31,6 +31,7 @@ builder.Services.AddScoped<PermissionUserRepository>();
 builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<DictionaryRepository>();
 builder.Services.AddScoped<IssueManagementRepository>();
+builder.Services.AddScoped<JiraConfigurationRepository>();
 builder.Services.AddHttpClient<JiraBoardService>(client => client.Timeout = TimeSpan.FromMinutes(3))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddScoped<DeliverableRepository>();

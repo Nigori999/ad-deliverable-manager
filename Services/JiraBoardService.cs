@@ -14,6 +14,7 @@ public sealed partial class JiraBoardService
     private const int MaxIssues = 5000;
     private const int MaxCommentIssues = 100;
     private readonly HttpClient _http;
+    private readonly JiraConfigurationRepository _configuration;
 
     private static readonly StageDefinition[] Stages =
     [
@@ -25,24 +26,11 @@ public sealed partial class JiraBoardService
         new("closed", "问题关闭", 5)
     ];
 
-    private static readonly Dictionary<string, string> StatusStages = new(StringComparer.OrdinalIgnoreCase)
+    public JiraBoardService(HttpClient http, JiraConfigurationRepository configuration)
     {
-        ["新增"] = "new",
-        ["Reopened"] = "confirm",
-        ["Analysis"] = "analysis",
-        ["Supplier Inbox"] = "analysis",
-        ["Supplier In Progress"] = "analysis",
-        ["Soluation Identified"] = "analysis",
-        ["Solved"] = "action",
-        ["Ready for Test"] = "verify",
-        ["Stay Constant"] = "verify",
-        ["Rejected"] = "verify",
-        ["Under OB Servation"] = "verify",
-        ["Closed"] = "closed",
-        ["Cancelled"] = "closed"
-    };
-
-    public JiraBoardService(HttpClient http) => _http = http;
+        _http = http;
+        _configuration = configuration;
+    }
 
     public async Task<object> GetMetadataAsync(JiraConnectionRequest request, CancellationToken ct = default)
     {
@@ -66,6 +54,7 @@ public sealed partial class JiraBoardService
                 severityCandidate = IsSeverityCandidate(x.Name, x.Id)
             })
             .ToArray();
+        var standard = await _configuration.GetEffectiveStandardAsync(connection.BaseUrl, connection.ProjectKey, ct);
 
         return new
         {
@@ -80,7 +69,14 @@ public sealed partial class JiraBoardService
                 key = GetString(project.RootElement, "key") ?? connection.ProjectKey,
                 name = GetString(project.RootElement, "name") ?? connection.ProjectKey
             },
-            fields = fieldItems
+            fields = fieldItems,
+            standard = standard is null ? null : new
+            {
+                standard.Id,
+                standard.ProjectName,
+                standard.RuleNote,
+                standard.Revision
+            }
         };
     }
 
@@ -90,6 +86,8 @@ public sealed partial class JiraBoardService
         var cutoffDate = ValidateCutoffDate(request.CutoffDate);
         var severityFieldId = ValidateFieldId(request.SeverityFieldId);
         var additionalJql = NormalizeAdditionalJql(request.AdditionalJql);
+        var standard = await _configuration.GetEffectiveStandardAsync(connection.BaseUrl, connection.ProjectKey, ct)
+            ?? throw new ArgumentException($"项目 {connection.ProjectKey} 尚未配置启用的JIRA时效标准，请先在“系统管理 / JIRA时效标准”中完成配置。");
 
         using var server = await GetJsonAsync(connection, "serverInfo", ct);
         var serverNow = ParseJiraDate(GetString(server.RootElement, "serverTime")) ?? DateTimeOffset.Now;
@@ -117,7 +115,7 @@ public sealed partial class JiraBoardService
             foreach (var issue in pageIssues.EnumerateArray())
             {
                 if (issues.Count >= MaxIssues) break;
-                issues.Add(ParseIssue(issue, connection, severityFieldId, effectiveCutoff));
+                issues.Add(ParseIssue(issue, connection, severityFieldId, effectiveCutoff, standard));
             }
             startAt += pageIssues.GetArrayLength();
             if (pageIssues.GetArrayLength() == 0) break;
@@ -216,6 +214,7 @@ public sealed partial class JiraBoardService
             generatedAt = serverNow,
             cutoffDate = cutoffDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             project = connection.ProjectKey,
+            standard = new { standard.Id, standard.ProjectName, standard.RuleNote, standard.Revision },
             query = jql,
             truncated = total > MaxIssues,
             sourceTotal = total,
@@ -309,7 +308,7 @@ public sealed partial class JiraBoardService
         return new(body, author, ParseJiraDate(GetString(element, "created")));
     }
 
-    private static AnalyzedIssue ParseIssue(JsonElement element, ConnectionSettings connection, string severityFieldId, DateTimeOffset cutoff)
+    private static AnalyzedIssue ParseIssue(JsonElement element, ConnectionSettings connection, string severityFieldId, DateTimeOffset cutoff, JiraProjectStandardDefinition standard)
     {
         var key = GetString(element, "key") ?? "UNKNOWN";
         var fields = element.GetProperty("fields");
@@ -342,7 +341,7 @@ public sealed partial class JiraBoardService
 
         var initialStatus = allStatusChanges.FirstOrDefault()?.FromString;
         if (string.IsNullOrWhiteSpace(initialStatus)) initialStatus = status;
-        var activeStage = StageFor(initialStatus);
+        var activeStage = StageFor(initialStatus, standard);
         var activeStageStarted = createdAt;
         var completed = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         DateTimeOffset? lastClosedAt = activeStage == "closed" ? resolutionDate : null;
@@ -350,7 +349,7 @@ public sealed partial class JiraBoardService
         foreach (var change in statusChanges)
         {
             if (change.Created < createdAt) continue;
-            var newStage = StageFor(change.ToValue);
+            var newStage = StageFor(change.ToValue, standard);
             if (!newStage.Equals(activeStage, StringComparison.OrdinalIgnoreCase))
             {
                 if (activeStage != "other")
@@ -365,7 +364,7 @@ public sealed partial class JiraBoardService
             else if (activeStage != "closed") lastClosedAt = null;
         }
 
-        var stageCode = StageFor(status);
+        var stageCode = StageFor(status, standard);
         if (stageCode != activeStage)
         {
             activeStage = stageCode;
@@ -375,8 +374,8 @@ public sealed partial class JiraBoardService
 
         var stageElapsedDays = Math.Max(0, (cutoff - activeStageStarted).TotalDays);
         var closureElapsedDays = Math.Max(0, ((stageCode == "closed" ? lastClosedAt ?? cutoff : cutoff) - createdAt).TotalDays);
-        var stageLimit = StageLimit(stageCode, severityKey);
-        var closureLimit = ClosureLimit(severityKey);
+        var stageLimit = StageLimit(stageCode, severityKey, standard);
+        var closureLimit = ClosureLimit(severityKey, standard);
         var stageOverdue = stageCode == "closed" ? 0 : OverdueDays(stageElapsedDays, stageLimit);
         var closureOverdue = stageCode == "closed" ? OverdueDays(closureElapsedDays, closureLimit) : OverdueDays((cutoff - createdAt).TotalDays, closureLimit);
 
@@ -561,28 +560,24 @@ public sealed partial class JiraBoardService
 
     private static string EscapeJql(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
     private static Uri BuildApiUri(string baseUrl, string resource) => new($"{baseUrl}/rest/api/2/{resource}", UriKind.Absolute);
-    private static string StageFor(string? status) => status is not null && StatusStages.TryGetValue(status.Trim(), out var stage) ? stage : "other";
+    private static string StageFor(string? status, JiraProjectStandardDefinition standard)
+    {
+        if (string.IsNullOrWhiteSpace(status)) return "other";
+        var normalized = status.Trim();
+        return standard.Stages.FirstOrDefault(stage => stage.Statuses.Any(value => value.Equals(normalized, StringComparison.OrdinalIgnoreCase)))?.StageCode ?? "other";
+    }
     private static string StageName(string code) => Stages.FirstOrDefault(x => x.Code == code)?.Name ?? "其他状态";
     private static bool IsStatusField(string field) => field.Equals("status", StringComparison.OrdinalIgnoreCase) || field == "状态";
     private static bool IsAssigneeField(string field) => field.Equals("assignee", StringComparison.OrdinalIgnoreCase) || field is "经办人" or "处理人" or "受理人";
 
-    private static int? StageLimit(string stage, string severity) => stage switch
+    private static int? StageLimit(string stage, string severity, JiraProjectStandardDefinition standard)
     {
-        "new" or "confirm" => 1,
-        "analysis" when severity is "S" or "A" or "B" => 2,
-        "analysis" when severity == "C" => 6,
-        "action" when severity is "S" or "A" or "B" => 2,
-        "action" when severity == "C" => 7,
-        "verify" => 5,
-        _ => null
-    };
+        var definition = standard.Stages.FirstOrDefault(x => x.StageCode.Equals(stage, StringComparison.OrdinalIgnoreCase));
+        return definition is not null && definition.Limits.TryGetValue(severity, out var value) ? value : null;
+    }
 
-    private static int? ClosureLimit(string severity) => severity switch
-    {
-        "S" or "A" => 14,
-        "B" or "C" => 25,
-        _ => null
-    };
+    private static int? ClosureLimit(string severity, JiraProjectStandardDefinition standard) =>
+        standard.ClosureLimits.TryGetValue(severity, out var value) ? value : null;
 
     private static int OverdueDays(double elapsed, int? limit) => !limit.HasValue || elapsed <= limit.Value
         ? 0

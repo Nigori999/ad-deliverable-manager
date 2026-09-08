@@ -54,6 +54,8 @@ public static class PermissionCatalog
     public const string IssueEdit = "ISSUE_EDIT";
     public const string IssueDelete = "ISSUE_DELETE";
     public const string JiraBoardView = "JIRA_BOARD_VIEW";
+    public const string JiraStandardView = "JIRA_STANDARD_VIEW";
+    public const string JiraStandardManage = "JIRA_STANDARD_MANAGE";
     public const string MasterDataView = "MASTERDATA_VIEW";
     public const string MasterDataCreate = "MASTERDATA_CREATE";
     public const string MasterDataEdit = "MASTERDATA_EDIT";
@@ -124,6 +126,8 @@ public static class PermissionCatalog
         (IssueEdit, "编辑问题汇总", "问题管理"),
         (IssueDelete, "删除问题汇总", "问题管理"),
         (JiraBoardView, "查看JIRA看板", "JIRA看板"),
+        (JiraStandardView, "查看JIRA时效标准", "系统管理"),
+        (JiraStandardManage, "管理JIRA时效标准", "系统管理"),
         (MasterDataView, "查看基础数据", "系统管理"),
         (MasterDataCreate, "新增基础数据", "系统管理"),
         (MasterDataEdit, "编辑基础数据", "系统管理"),
