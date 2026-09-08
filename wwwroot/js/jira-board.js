@@ -51,7 +51,7 @@ async function renderJiraBoard() {
           <label><span>统计截止日期 *</span><input name="cutoffDate" type="date" value="${jiraToday()}" max="${jiraToday()}" required></label>
           <div><span>已选查询方案</span><strong id="jira-selected-count">0 个</strong></div>
           <div><span>涉及项目</span><strong id="jira-selected-projects">—</strong></div>
-          <button type="submit" class="btn btn-primary" id="jira-run-analysis" disabled>开始分析</button>
+          <button type="button" class="btn btn-primary" id="jira-run-analysis">开始分析</button>
         </div>
         <div class="jira-preset-workspace">
           <aside class="jira-preset-sidebar">
@@ -83,7 +83,7 @@ async function renderJiraBoard() {
   byId('jira-preset-save-new').onclick=()=>saveJiraPreset(true);
   byId('jira-preset-delete').onclick=deleteJiraPreset;
   byId('jira-add-condition').onclick=()=>{addJiraCondition();markJiraDirty();};
-  byId('jira-board-form').onsubmit = runJiraAnalysis;
+  byId('jira-run-analysis').onclick=runJiraAnalysis;
   byId('jira-board-form').elements.projectKey.addEventListener('change',handleJiraProjectChange);
   byId('jira-board-form').elements.projectKey.addEventListener('input',markJiraDirty);
   byId('jira-board-form').elements.rawJql.addEventListener('input',()=>{updateJiraPreview();markJiraDirty();});
@@ -336,7 +336,6 @@ function updateJiraSelectionSummary(){
   const incomplete=selected.filter(x=>!x.severityFieldId||!x.variantFieldId).length;
   if(byId('jira-selected-count'))byId('jira-selected-count').textContent=`${selected.length} 个${incomplete?`（${incomplete}个待补充字段）`:''}`;
   if(byId('jira-selected-projects'))byId('jira-selected-projects').textContent=[...new Set(selected.map(x=>x.projectKey))].join('、')||'—';
-  if(byId('jira-run-analysis'))byId('jira-run-analysis').disabled=!selected.length||Boolean(incomplete);
 }
 
 function markJiraDirty(){
@@ -432,20 +431,25 @@ async function deleteJiraPreset() {
   await switchJiraPresetEditor(null,true);renderJiraPresetList();updateJiraSelectionSummary();toast('查询方案已删除。');
 }
 
-async function runJiraAnalysis(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  if(!form.elements.cutoffDate.value){toast('请选择统计截止日期。','error');return;}
+async function runJiraAnalysis() {
+  const form = byId('jira-board-form');
+  const cutoffDate=form.elements.cutoffDate.value;
+  if(!cutoffDate){toast('请选择统计截止日期。','error');return;}
+  if(cutoffDate>jiraToday()){toast('统计截止日期不能晚于今天。','error');return;}
   const selected=jiraBoardState.presets.filter(x=>jiraBoardState.selectedPresetIds.has(x.id));
   if(!selected.length){toast('请至少勾选一个查询方案。','error');return;}
-  if(selected.some(x=>!x.severityFieldId||!x.variantFieldId)){toast('选中的查询方案存在待补充字段，请先编辑并保存。','error');return;}
+  const incomplete=selected.filter(x=>!x.projectKey||!x.severityFieldId||!x.variantFieldId);
+  if(incomplete.length){
+    const details=incomplete.map(item=>{const missing=[];if(!item.projectKey)missing.push('项目编号');if(!item.severityFieldId)missing.push('严重等级字段');if(!item.variantFieldId)missing.push('ECU Variant字段');return `“${item.name}”缺少${missing.join('、')}`;});
+    toast(`${details.join('；')}，请先编辑并保存。`,'error');return;
+  }
   const button = byId('jira-run-analysis');
   button.disabled = true;
   button.textContent = '读取并计算中…';
   byId('jira-board-results').innerHTML = '<section class="jira-loading"><div class="jira-spinner"></div><strong>正在读取 Jira 问题历史</strong><span>问题较多时需要一些时间，请保持页面打开。</span></section>';
   try {
-    const analyses=await runJiraPresetAnalyses(selected,form.elements.cutoffDate.value,button);
-    jiraBoardState.analysis = mergeJiraAnalyses(analyses,form.elements.cutoffDate.value);
+    const analyses=await runJiraPresetAnalyses(selected,cutoffDate,button);
+    jiraBoardState.analysis = mergeJiraAnalyses(analyses,cutoffDate);
     jiraBoardState.commentGeneration += 1;
     jiraBoardState.commentCache.clear();
     renderJiraResults(jiraBoardState.analysis);
@@ -720,7 +724,7 @@ function renderJiraResults(data) {
     try { await navigator.clipboard.writeText(queryText); toast('JQL已复制。'); }
     catch { toast('浏览器未允许复制，请从查询口径中手动复制JQL。', 'error'); }
   };
-  byId('jira-rerun').onclick=()=>byId('jira-board-form').requestSubmit();
+  byId('jira-rerun').onclick=runJiraAnalysis;
   byId('jira-edit-query').onclick=()=>document.querySelector('.jira-config-card').scrollIntoView({behavior:'smooth',block:'start'});
   results.querySelectorAll('[data-jira-stage]').forEach(button => button.onclick = () => {
     const code = button.dataset.jiraStage;
