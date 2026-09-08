@@ -1,4 +1,5 @@
 using AdDeliverableManager.Models;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace AdDeliverableManager.Services;
 
@@ -9,7 +10,7 @@ public sealed partial class JiraConfigurationRepository
         var value = await GetGlobalConnectionAsync(ct);
         return value is null
             ? new { configured = false, baseUrl = "", username = "", hasPassword = false, updatedAt = (string?)null, revision = 0 }
-            : new { configured = true, baseUrl = value.BaseUrl, username = value.Username, hasPassword = true, updatedAt = value.UpdatedAt, revision = value.Revision };
+            : new { configured = true, baseUrl = value.BaseUrl, username = value.Username, hasPassword = true, updatedAt = (string?)value.UpdatedAt, revision = value.Revision };
     }
 
     public async Task<JiraGlobalConnectionDefinition?> GetGlobalConnectionAsync(CancellationToken ct = default)
