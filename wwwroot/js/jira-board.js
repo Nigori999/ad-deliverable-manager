@@ -1,4 +1,4 @@
-const jiraBoardState = { metadata: null, connectionSignature: null, analysis: null, commentCache: new Map(), presets: [], currentPresetId: null };
+const jiraBoardState = { metadata: null, connectionSignature: null, analysis: null, commentCache: new Map(), commentGeneration: 0, presets: [], currentPresetId: null, trendRange: '90', variantMode: 'ADS' };
 
 const jiraStageColors = {
   new: '#6f7f9b', confirm: '#4e7bf2', analysis: '#6b5ce7', action: '#b86fe2',
@@ -32,14 +32,13 @@ async function renderJiraBoard() {
   jiraBoardState.analysis = null;
   jiraBoardState.presets = [];
   jiraBoardState.currentPresetId = null;
+  jiraBoardState.trendRange = '90';
+  jiraBoardState.variantMode = 'ADS';
+  jiraBoardState.commentGeneration += 1;
   jiraBoardState.commentCache.clear();
   content.innerHTML = `
-    <section class="jira-hero">
-      <div><span class="jira-kicker">JIRA ISSUE INTELLIGENCE</span><h2>从问题数量走向处理效率洞察</h2><p>基于 Jira 状态历史还原统计截止日的问题阶段，统一查看在途、超时、关闭率与处理周期。</p></div>
-      <div class="jira-hero-rule"><span>时效口径</span><strong>按项目自动匹配</strong><small>请在系统管理 / JIRA时效标准中维护状态与自然日时限</small></div>
-    </section>
     <section class="jira-config-card">
-      <div class="jira-section-head"><div><span>01 · DATA SOURCE</span><h3>Jira连接与查询范围</h3><p>凭证仅用于本次查询，不写入系统数据库或浏览器本地存储。</p></div><div id="jira-connection-badge" class="jira-connection-badge idle"><i></i>等待连接</div></div>
+      <div class="jira-section-head"><div><span>JIRA BOARD</span><h3>连接与查询范围</h3><p>凭证仅用于本次查询，不写入系统数据库或浏览器本地存储；时效口径按项目自动匹配。</p></div><div id="jira-connection-badge" class="jira-connection-badge idle"><i></i>等待连接</div></div>
       <form id="jira-board-form">
         <div class="jira-config-grid">
           <label><span>Jira地址 *</span><input name="baseUrl" type="url" placeholder="http://jira.company.local:8080/jira" autocomplete="url" required></label>
@@ -48,6 +47,7 @@ async function renderJiraBoard() {
           <label><span>密码 *</span><input name="password" type="password" autocomplete="current-password" required></label>
           <label><span>统计截止日期 *</span><input name="cutoffDate" type="date" value="${jiraToday()}" max="${jiraToday()}" required></label>
           <div class="jira-config-field jira-severity-field"><label for="jira-severity-field-input">严重等级字段 *</label><div id="jira-severity-field-host">${jiraFieldPickerHtml('', { name:'severityFieldId', placeholder:'连接后搜索并选择字段', disabled:true, inputId:'jira-severity-field-input' })}</div></div>
+          <div class="jira-config-field jira-project-field"><label for="jira-variant-field-input">ECU Variant字段 *</label><div id="jira-variant-field-host">${jiraFieldPickerHtml('', { name:'variantFieldId', placeholder:'连接后搜索并选择字段', disabled:true, inputId:'jira-variant-field-input' })}</div></div>
         </div>
         <div class="jira-connect-actions">
           <button type="button" class="btn btn-light" id="jira-test-connection">测试连接并加载字段</button>
@@ -90,17 +90,24 @@ async function loadJiraMetadata() {
       form.elements.rawJql.value = '';
       jiraBoardState.currentPresetId = null;
     }
-    const candidate = metadata.fields.find(field => field.severityCandidate);
+    const projectFields = metadata.projectFields || metadata.fields;
+    const candidate = projectFields.find(field => field.severityCandidate);
+    const variantCandidate = projectFields.find(field => field.name.trim().toLowerCase() === 'ecu variant')
+      || projectFields.find(field => field.name.toLowerCase().includes('ecu variant'));
     const severityHost = byId('jira-severity-field-host');
     severityHost.innerHTML = jiraFieldPickerHtml(candidate?.id || '', { name:'severityFieldId', placeholder:'搜索字段名称或ID', inputId:'jira-severity-field-input' });
-    bindJiraFieldPicker(severityHost.firstElementChild, { selectedId:candidate?.id || '', onChange:updateJiraPreview });
+    bindJiraFieldPicker(severityHost.firstElementChild, { fields:projectFields, selectedId:candidate?.id || '', onChange:updateJiraPreview });
+    const variantHost = byId('jira-variant-field-host');
+    variantHost.innerHTML = jiraFieldPickerHtml(variantCandidate?.id || '', { name:'variantFieldId', placeholder:'搜索项目表单字段', inputId:'jira-variant-field-input' });
+    bindJiraFieldPicker(variantHost.firstElementChild, { fields:projectFields, selectedId:variantCandidate?.id || '', onChange:updateJiraPreview });
     byId('jira-query-builder').classList.remove('hidden');
     byId('jira-run-analysis').disabled = !metadata.standard;
     const transportWarning = connection.baseUrl.toLowerCase().startsWith('http://') ? ' · 注意：HTTP会明文传输Jira凭证' : '';
     const standardText = metadata.standard ? ` · 已应用标准：${metadata.standard.projectName}` : ' · 未配置JIRA时效标准';
-    byId('jira-server-summary').textContent = `${metadata.server.title} ${metadata.server.version} · ${metadata.project.name} (${metadata.project.key}) · ${metadata.fields.length} 个可查询字段${standardText}${transportWarning}`;
-    badge.className = `jira-connection-badge ${metadata.standard ? 'ready' : 'warning'}`;
-    badge.innerHTML = metadata.standard ? '<i></i>连接成功' : '<i></i>缺少时效标准';
+    const projectFieldText=metadata.projectFieldsScoped?`${projectFields.length} 个项目表单字段`:`${projectFields.length} 个字段（项目范围读取失败）`;
+    byId('jira-server-summary').textContent = `${metadata.server.title} ${metadata.server.version} · ${metadata.project.name} (${metadata.project.key}) · ${projectFieldText} / ${metadata.fields.length} 个可查询字段${standardText}${transportWarning}`;
+    badge.className = `jira-connection-badge ${metadata.standard&&!metadata.projectFieldWarning ? 'ready' : 'warning'}`;
+    badge.innerHTML = !metadata.standard?'<i></i>缺少时效标准':metadata.projectFieldWarning?'<i></i>字段范围已降级':'<i></i>连接成功';
     if (!byId('jira-condition-list').children.length) addJiraCondition();
     byId('jira-add-condition').onclick = addJiraCondition;
     byId('jira-preset-save').onclick = saveJiraPreset;
@@ -112,6 +119,7 @@ async function loadJiraMetadata() {
     updateJiraPreview();
     if (metadata.standard) toast('Jira连接成功，字段和项目时效标准已加载。');
     else toast('Jira连接成功，但当前项目尚未配置JIRA时效标准。', 'error');
+    if (metadata.projectFieldWarning) toast(metadata.projectFieldWarning, 'error');
   } catch (error) {
     jiraBoardState.metadata = null;
     jiraBoardState.connectionSignature = null;
@@ -138,8 +146,7 @@ function jiraFieldDisplay(field) {
   return field ? `${field.name} · ${field.id}${field.custom ? ' · 自定义' : ''}` : '';
 }
 
-function bindJiraFieldPicker(root, { selectedId = '', onChange = null } = {}) {
-  const fields = jiraBoardState.metadata?.fields || [];
+function bindJiraFieldPicker(root, { fields = jiraBoardState.metadata?.fields || [], selectedId = '', onChange = null } = {}) {
   const hidden = root.querySelector('[data-jira-field]');
   const input = root.querySelector('[data-jira-field-input]');
   const toggle = root.querySelector('[data-jira-field-toggle]');
@@ -415,6 +422,7 @@ async function runJiraAnalysis(event) {
   if (jiraBoardState.connectionSignature !== jiraConnectionSignature(jiraConnection())) { toast('Jira地址、项目或账号已变化，请重新测试连接并加载字段。', 'error'); return; }
   if (!jiraBoardState.metadata.standard) { toast('当前项目尚未配置启用的JIRA时效标准。', 'error'); return; }
   if (!form.elements.severityFieldId.value) { toast('请选择严重等级字段。', 'error'); return; }
+  if (!form.elements.variantFieldId.value) { toast('请选择ECU Variant字段。', 'error'); return; }
   for (const row of document.querySelectorAll('.jira-condition-row')) {
     const field = row.querySelector('[data-jira-field]').value;
     const operator = row.querySelector('[data-jira-operator]').value;
@@ -431,9 +439,11 @@ async function runJiraAnalysis(event) {
       connection: jiraConnection(),
       cutoffDate: form.elements.cutoffDate.value,
       severityFieldId: form.elements.severityFieldId.value,
+      variantFieldId: form.elements.variantFieldId.value,
       additionalJql: buildJiraConditions() || null
     };
     jiraBoardState.analysis = await api('/internal/jira-board/analyze', { method: 'POST', body: JSON.stringify(payload) });
+    jiraBoardState.commentGeneration += 1;
     jiraBoardState.commentCache.clear();
     renderJiraResults(jiraBoardState.analysis);
     toast('JIRA看板已更新。');
@@ -450,11 +460,61 @@ function jiraNumber(value) { return Number(value || 0).toLocaleString('zh-CN'); 
 function jiraPercent(value) { return value === null || value === undefined ? '—' : `${Number(value).toFixed(1)}%`; }
 function jiraDays(value) { return value === null || value === undefined ? '—' : `${Number(value).toFixed(1)}天`; }
 
+function jiraDateKey(value) { return String(value || '').slice(0, 10); }
+function jiraUtcDate(key) { return new Date(`${key}T00:00:00Z`); }
+function jiraDateOffset(key, days) { const date=jiraUtcDate(key);date.setUTCDate(date.getUTCDate()+days);return date.toISOString().slice(0,10); }
+
+function jiraTrendBuckets(data, range) {
+  const cutoff=data.cutoffDate;
+  const dates=data.issues.flatMap(issue=>[jiraDateKey(issue.createdAt),jiraDateKey(issue.closedAt)]).filter(Boolean).sort();
+  let start=range==='all'?(dates[0]||cutoff):jiraDateOffset(cutoff,-Number(range)+1);
+  if (start>cutoff) start=cutoff;
+  const buckets=[];
+  if (range==='all') {
+    let cursor=`${start.slice(0,7)}-01`;
+    while (cursor<=cutoff) {
+      const date=jiraUtcDate(cursor);date.setUTCMonth(date.getUTCMonth()+1);date.setUTCDate(0);
+      const end=date.toISOString().slice(0,10)>cutoff?cutoff:date.toISOString().slice(0,10);
+      buckets.push({start:cursor<start?start:cursor,end,label:cursor.slice(0,7),created:0,closed:0});
+      cursor=jiraDateOffset(end,1);
+    }
+  } else {
+    const step=Number(range)>=180?7:1;
+    for(let cursor=start;cursor<=cutoff;cursor=jiraDateOffset(cursor,step)) {
+      const end=jiraDateOffset(cursor,step-1)>cutoff?cutoff:jiraDateOffset(cursor,step-1);
+      buckets.push({start:cursor,end,label:step===1?cursor.slice(5):`${cursor.slice(5)}~${end.slice(5)}`,created:0,closed:0});
+    }
+  }
+  const locate=key=>buckets.find(bucket=>key>=bucket.start&&key<=bucket.end);
+  data.issues.forEach(issue=>{
+    const created=locate(jiraDateKey(issue.createdAt));if(created)created.created+=1;
+    const closed=locate(jiraDateKey(issue.closedAt));if(closed)closed.closed+=1;
+  });
+  return buckets;
+}
+
+function jiraTrendChart(data, range) {
+  const buckets=jiraTrendBuckets(data,range);jiraBoardState.trendBuckets=buckets;
+  if(!buckets.length)return jiraNoData('暂无趋势数据');
+  const width=1000,height=286,left=54,right=24,top=22,bottom=42,plotWidth=width-left-right,plotHeight=height-top-bottom;
+  const max=Math.max(1,...buckets.flatMap(x=>[x.created,x.closed]));
+  const x=index=>left+(buckets.length===1?plotWidth/2:index*plotWidth/(buckets.length-1));
+  const y=value=>top+plotHeight-value/max*plotHeight;
+  const path=field=>buckets.map((bucket,index)=>`${index?'L':'M'} ${x(index).toFixed(1)} ${y(bucket[field]).toFixed(1)}`).join(' ');
+  const grid=[0,.25,.5,.75,1].map(ratio=>`<g><line x1="${left}" y1="${top+plotHeight*(1-ratio)}" x2="${width-right}" y2="${top+plotHeight*(1-ratio)}"></line><text x="${left-10}" y="${top+plotHeight*(1-ratio)+4}" text-anchor="end">${Math.round(max*ratio)}</text></g>`).join('');
+  const labelEvery=Math.max(1,Math.ceil(buckets.length/7));
+  const labels=buckets.map((bucket,index)=>index%labelEvery===0||index===buckets.length-1?`<text x="${x(index)}" y="${height-13}" text-anchor="middle">${esc(bucket.label)}</text>`:'').join('');
+  const points=(field,label,color)=>buckets.map((bucket,index)=>`<g class="jira-trend-point" data-jira-trend-index="${index}" data-jira-trend-kind="${field}" tabindex="0" role="button" aria-label="${esc(bucket.start)}至${esc(bucket.end)} ${label}${bucket[field]}项"><circle class="hit" cx="${x(index)}" cy="${y(bucket[field])}" r="9"></circle><circle cx="${x(index)}" cy="${y(bucket[field])}" r="3" fill="${color}"></circle><title>${bucket.start}${bucket.end===bucket.start?'':` ~ ${bucket.end}`}：${label}${bucket[field]}项</title></g>`).join('');
+  return `<div class="jira-trend-legend"><span><i class="created"></i>新增问题</span><span><i class="closed"></i>关闭问题</span><small>点击数据点查看明细</small></div><div class="jira-trend-scroll"><svg class="jira-trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="问题新增与关闭趋势"><g class="grid">${grid}${labels}</g><path class="created" d="${path('created')}"></path><path class="closed" d="${path('closed')}"></path>${points('created','新增问题','#4e6fe4')}${points('closed','关闭问题','#1ca47e')}</svg></div>`;
+}
+
 function jiraFunnelChart(items) {
-  const rowHeight = 74, center = 500;
+  const rowHeight = 86, center = 500;
+  const max=Math.max(1,...items.map(item=>item.count));
+  const widths=items.map(item=>260+(item.count/max)*660);
   const points = items.map((item,index) => {
-    const top = 900 - index * 100, bottom = 800 - index * 100, y = index * rowHeight;
-    return `<g class="jira-funnel-layer" data-jira-stage="${esc(item.code)}" tabindex="0" role="button" aria-label="${esc(item.name)} ${item.count}项"><polygon points="${center-top/2},${y+2} ${center+top/2},${y+2} ${center+bottom/2},${y+rowHeight-3} ${center-bottom/2},${y+rowHeight-3}" fill="${jiraStageColors[item.code]}"></polygon><text x="${center}" y="${y+32}" text-anchor="middle">${esc(item.name)} · ${jiraNumber(item.count)}项</text><text class="sub" x="${center}" y="${y+52}" text-anchor="middle">占全部问题 ${jiraPercent(item.share)}</text></g>`;
+    const top=widths[index],bottom=widths[index+1]??top,y=index*rowHeight;
+    return `<g class="jira-funnel-layer" data-jira-stage="${esc(item.code)}" tabindex="0" role="button" aria-label="${esc(item.name)}累计到达${item.count}项，到达率${jiraPercent(item.share)}，环节转化率${jiraPercent(item.previousConversion)}"><polygon points="${center-top/2},${y+2} ${center+top/2},${y+2} ${center+bottom/2},${y+rowHeight-3} ${center-bottom/2},${y+rowHeight-3}" fill="${jiraStageColors[item.code]}"></polygon><text x="${center}" y="${y+31}" text-anchor="middle">${esc(item.name)} · ${jiraNumber(item.count)}项</text><text class="sub" x="${center}" y="${y+51}" text-anchor="middle">到达率 ${jiraPercent(item.share)} · 环节转化 ${jiraPercent(item.previousConversion)}</text><text class="sub loss" x="${center}" y="${y+68}" text-anchor="middle">${index?'较上一阶段流失 '+jiraNumber(item.dropFromPrevious)+' 项':'全部问题基准'}</text></g>`;
   }).join('');
   return `<svg class="jira-funnel-svg" viewBox="0 0 1000 ${items.length*rowHeight}" aria-label="问题处理阶段漏斗">${points}</svg>`;
 }
@@ -478,15 +538,100 @@ function jiraDurationChart(items, valueField, labelField, colorField = null) {
   return `<div class="jira-chart-list duration">${items.map((item,index)=>`<div><em>${index+1}</em><span>${esc(item[labelField])}</span><i><b style="width:${(item[valueField]||0)/max*100}%;${colorField?`--bar:${jiraStageColors[item[colorField]]}`:''}"></b></i><strong>${jiraDays(item[valueField])}</strong><small>${item.sampleCount}项</small></div>`).join('')}</div>`;
 }
 
+function jiraPieSector(start,end,cx=82,cy=82,r=68) {
+  const point=angle=>{const radians=(angle-90)*Math.PI/180;return [cx+r*Math.cos(radians),cy+r*Math.sin(radians)];};
+  const from=point(start),to=point(end),large=end-start>180?1:0;
+  return `M ${cx} ${cy} L ${from[0]} ${from[1]} A ${r} ${r} 0 ${large} 1 ${to[0]} ${to[1]} Z`;
+}
+
+function jiraVariantPie(data) {
+  const active=data.issues.filter(issue=>issue.stageCode!=='closed');
+  const definitions=[['ADS','ADS','#4e6fe4'],['LIDAR','LiDAR','#16a38f'],['OTHER','其他/未填写','#aab4c4']];
+  const values=definitions.map(([key,label,color])=>({key,label,color,count:active.filter(issue=>issue.variantKey===key).length}));
+  const total=active.length||1;let cursor=0;
+  const slices=values.filter(item=>item.count).map(item=>{
+    const start=cursor;cursor+=item.count/total*360;
+    return item.count===total
+      ? `<circle cx="82" cy="82" r="68" fill="${item.color}" data-jira-variant="${item.key}" tabindex="0" role="button"><title>${item.label} ${item.count}项</title></circle>`
+      : `<path d="${jiraPieSector(start,cursor)}" fill="${item.color}" data-jira-variant="${item.key}" tabindex="0" role="button"><title>${item.label} ${item.count}项</title></path>`;
+  }).join('');
+  return `<div class="jira-variant-pie"><svg viewBox="0 0 164 164" aria-label="未关闭问题ECU Variant分布">${slices||'<circle cx="82" cy="82" r="68" fill="#e9edf3"></circle>'}</svg><div class="jira-variant-total"><strong>${jiraNumber(active.length)}</strong><span>未关闭问题</span></div></div><div class="jira-variant-legend">${values.map(item=>`<button type="button" data-jira-variant="${item.key}"><i style="background:${item.color}"></i><span>${item.label}</span><strong>${item.count}</strong><small>${jiraPercent(active.length?item.count/active.length*100:null)}</small></button>`).join('')}</div>`;
+}
+
+function jiraVariantAssigneeChart(data, mode) {
+  const issues=data.issues.filter(issue=>issue.stageCode!=='closed'&&issue.variantKey===mode);
+  const values=jiraDistribution(issues,'assignee','未分配');
+  const max=Math.max(1,...values.map(item=>item[1]));
+  return values.length?`<div class="jira-assignee-backlog">${values.map(item=>`<button type="button" data-jira-variant-assignee="${esc(item[0])}"><span title="${esc(item[0])}">${esc(item[0])}</span><i><b style="width:${item[1]/max*100}%"></b></i><strong>${item[1]}</strong></button>`).join('')}</div>`:jiraNoData(`${mode==='LIDAR'?'LiDAR':'ADS'}暂无未关闭问题`);
+}
+
+function renderJiraVariantAssignees(data) {
+  const host=byId('jira-variant-assignee-chart');if(!host)return;
+  host.innerHTML=jiraVariantAssigneeChart(data,jiraBoardState.variantMode);
+  document.querySelectorAll('[data-jira-variant-mode]').forEach(button=>button.classList.toggle('active',button.dataset.jiraVariantMode===jiraBoardState.variantMode));
+  host.querySelectorAll('[data-jira-variant-assignee]').forEach(button=>button.onclick=()=>{
+    const assignee=button.dataset.jiraVariantAssignee;
+    const issues=data.issues.filter(issue=>issue.stageCode!=='closed'&&issue.variantKey===jiraBoardState.variantMode&&issue.assignee===assignee);
+    openJiraDetails(`${jiraBoardState.variantMode==='LIDAR'?'LiDAR':'ADS'} · ${assignee} · ${issues.length}项`,issues,'stage');
+  });
+}
+
+function jiraFollowUpChart(items, failedCount) {
+  const order={S:0,A:1,B:2,C:3,UNKNOWN:9};
+  const severity=[...new Map(items.map(issue=>[issue.severityLabel,{label:issue.severityLabel,key:issue.severityKey,count:0}])).values()];
+  severity.forEach(group=>group.count=items.filter(issue=>issue.severityLabel===group.label).length);
+  severity.sort((a,b)=>(order[a.key]??9)-(order[b.key]??9)||b.count-a.count);
+  const max=Math.max(1,...severity.map(item=>item.count));
+  return `<div class="jira-followup-chart"><button type="button" class="jira-followup-total" data-jira-followup="all"><span>当日未跟进</span><strong>${jiraNumber(items.length)}</strong><small>未关闭且截止日没有新增评论</small></button><div class="jira-followup-severity">${severity.length?severity.map(item=>`<button type="button" data-jira-followup="${esc(item.label)}"><span class="jira-severity ${esc(item.key.toLowerCase())}">${esc(item.label)}</span><i><b style="width:${item.count/max*100}%"></b></i><strong>${item.count}</strong></button>`).join(''):jiraNoData('所有未关闭问题当日均有跟进')}</div></div>${failedCount?`<p class="jira-chart-warning">另有 ${failedCount} 项最新评论读取失败，未纳入未跟进统计。</p>`:''}`;
+}
+
+async function loadJiraFollowUpAnalysis(data) {
+  const host=byId('jira-followup-host');if(!host)return;
+  const active=data.issues.filter(issue=>issue.stageCode!=='closed');
+  if(!active.length){host.innerHTML=jiraFollowUpChart([],0);return;}
+  host.innerHTML='<div class="jira-chart-loading"><div class="jira-spinner"></div><strong>正在核对当日评论</strong><span>0 / '+jiraNumber(active.length)+'</span></div>';
+  await loadJiraComments(active.map(issue=>issue.key),(completed,total)=>{
+    if(jiraBoardState.analysis!==data)return;
+    const progress=host.querySelector('span');if(progress)progress.textContent=`${jiraNumber(completed)} / ${jiraNumber(total)}`;
+  });
+  if(jiraBoardState.analysis!==data||!byId('jira-followup-host'))return;
+  const failed=active.filter(issue=>jiraBoardState.commentCache.get(issue.key)?.error);
+  const items=active.filter(issue=>{const comment=jiraBoardState.commentCache.get(issue.key);return comment&&!comment.error&&jiraDateKey(comment.created)!==data.cutoffDate;});
+  host.innerHTML=jiraFollowUpChart(items,failed.length);
+  host.querySelectorAll('[data-jira-followup]').forEach(button=>button.onclick=()=>{
+    const value=button.dataset.jiraFollowup;
+    const detail=value==='all'?items:items.filter(issue=>issue.severityLabel===value);
+    openJiraDetails(`当日未跟进${value==='all'?'':` · ${value}`} · ${detail.length}项`,detail,'stage',{compact:true});
+  });
+}
+
+function bindJiraKeyboardClicks(root) {
+  root.querySelectorAll('[role="button"][tabindex="0"]').forEach(item=>item.onkeydown=event=>{
+    if(event.key==='Enter'||event.key===' '){event.preventDefault();item.onclick?.();}
+  });
+}
+
+function renderJiraTrend(data) {
+  const host=byId('jira-trend-chart');if(!host)return;
+  host.innerHTML=jiraTrendChart(data,jiraBoardState.trendRange);
+  document.querySelectorAll('[data-jira-trend-range]').forEach(button=>button.classList.toggle('active',button.dataset.jiraTrendRange===jiraBoardState.trendRange));
+  host.querySelectorAll('[data-jira-trend-index]').forEach(point=>point.onclick=()=>{
+    const bucket=jiraBoardState.trendBuckets[Number(point.dataset.jiraTrendIndex)],kind=point.dataset.jiraTrendKind;
+    const issues=data.issues.filter(issue=>{const key=jiraDateKey(kind==='created'?issue.createdAt:issue.closedAt);return key>=bucket.start&&key<=bucket.end;});
+    openJiraDetails(`${bucket.start}${bucket.end===bucket.start?'':` ~ ${bucket.end}`} · ${kind==='created'?'新增':'关闭'}问题 · ${issues.length}项`,issues,kind==='closed'?'closure':'stage');
+  });
+  bindJiraKeyboardClicks(host);
+}
+
 function renderJiraResults(data) {
   const warnings = [];
   if (data.truncated) warnings.push(`Jira共返回 ${jiraNumber(data.sourceTotal)} 条，当前看板为保护服务器仅分析前 5,000 条，请缩小查询条件。`);
-  if (data.historyTruncated) warnings.push(`有 ${jiraNumber(data.historyTruncated)} 条问题的 Jira 变更历史超过接口单次展开上限，其历史阶段时长可能不完整，建议缩小查询范围后复核。`);
+  if (data.historyTruncated) warnings.push(`有 ${jiraNumber(data.historyTruncated)} 条问题的 Jira 变更历史超过接口单次展开上限，其历史阶段到达及阶段时长可能不完整，建议缩小查询范围后复核。`);
   if (data.unmatchedStatuses.length) warnings.push(`有 ${data.unmatchedStatuses.reduce((sum, x) => sum + x.count, 0)} 条问题状态未匹配处理阶段：${data.unmatchedStatuses.map(x => `${x.status}(${x.count})`).join('、')}。`);
   if (data.unmatchedSeverities.length) warnings.push(`有 ${data.unmatchedSeverities.reduce((sum, x) => sum + x.count, 0)} 条问题的严重等级无法映射为 S/A/B/C，因此不参与超时判定：${data.unmatchedSeverities.map(x => `${x.severity}(${x.count})`).join('、')}。`);
   const results = byId('jira-board-results');
   results.innerHTML = `
-    <section class="jira-result-head"><div><span>02 · ANALYSIS RESULT</span><h3>${esc(data.project)} · 截至 ${esc(data.cutoffDate)}</h3><p>应用标准：${esc(data.standard.projectName)}（修订 ${data.standard.revision}） · 查询口径：<code>${esc(data.query)}</code></p></div><button type="button" class="btn btn-light btn-sm" id="jira-copy-jql">复制JQL</button></section>
+    <section class="jira-result-head"><div><span>ANALYSIS RESULT</span><h3>${esc(data.project)} · 截至 ${esc(data.cutoffDate)}</h3><p>应用标准：${esc(data.standard.projectName)}（修订 ${data.standard.revision}） · 查询口径：<code>${esc(data.query)}</code></p></div><button type="button" class="btn btn-light btn-sm" id="jira-copy-jql">复制JQL</button></section>
     ${warnings.map(text => `<div class="jira-warning">${esc(text)}</div>`).join('')}
     <section class="jira-metrics">
       ${jiraMetric('统计问题', data.summary.total, '查询范围内全部问题', 'all')}
@@ -496,10 +641,24 @@ function renderJiraResults(data) {
       ${jiraMetric('阶段超时', data.summary.stageOverdue, '当前阶段超过时效', 'stage-overdue', 'danger')}
       ${jiraMetric('关闭周期超时', data.summary.closureOverdue, '当前未关闭且超过总周期', 'closure-overdue', 'orange')}
     </section>
+    <section class="jira-panel jira-trend-panel">
+      <div class="jira-panel-head"><div><span>ISSUE TREND</span><h3>问题新增与关闭趋势</h3><p>双折线对比问题流入与关闭节奏，点击数据点可查看问题明细。</p></div><div class="jira-segmented">${[['30','30天'],['90','90天'],['180','180天'],['all','全部']].map(item=>`<button type="button" data-jira-trend-range="${item[0]}" class="${jiraBoardState.trendRange===item[0]?'active':''}">${item[1]}</button>`).join('')}</div></div>
+      <div id="jira-trend-chart"></div>
+    </section>
     <section class="jira-panel jira-funnel-panel">
-      <div class="jira-panel-head"><div><span>PROCESS FUNNEL</span><h3>问题处理阶段漏斗</h3><p>点击任一阶段，查看严重等级、人员分布和问题明细。</p></div><small>当前状态快照</small></div>
+      <div class="jira-panel-head"><div><span>PROCESS FUNNEL</span><h3>问题处理阶段漏斗</h3><p>按截止日前累计到达的最深阶段向前统计；点击任一阶段查看已到达问题明细。</p></div><small>累计到达口径</small></div>
       <div class="jira-funnel-chart">${jiraFunnelChart(data.funnel)}</div>
     </section>
+    <div class="jira-insight-grid">
+      <section class="jira-panel jira-variant-panel">
+        <div class="jira-panel-head"><div><span>VARIANT BACKLOG</span><h3>未关闭问题车型域分布</h3><p>饼图展示ADS、LiDAR及其他问题占比；右侧展示当前处理人堆积数量。</p></div><div class="jira-segmented"><button type="button" data-jira-variant-mode="ADS" class="active">ADS</button><button type="button" data-jira-variant-mode="LIDAR">LiDAR</button></div></div>
+        <div class="jira-variant-body"><div class="jira-variant-summary">${jiraVariantPie(data)}</div><div><div class="jira-subhead"><strong>当前处理人问题堆积</strong><span>按数量从高到低 · 点击柱条查看明细</span></div><div id="jira-variant-assignee-chart"></div></div></div>
+      </section>
+      <section class="jira-panel jira-followup-panel">
+        <div class="jira-panel-head"><div><span>DAILY FOLLOW-UP</span><h3>当日未跟进问题</h3><p>统计未关闭且截止日没有新增评论的问题，可按严重等级穿透。</p></div><small>仅以新增评论判断</small></div>
+        <div id="jira-followup-host"></div>
+      </section>
+    </div>
     <section class="jira-panel">
       <div class="jira-panel-head"><div><span>OVERDUE RADAR</span><h3>处理超时报表</h3><p>阶段超时按当前阶段停留时长计算；关闭总周期按创建至截止日计算。</p></div><small>红色越深风险越高</small></div>
       ${jiraOverdueChart(data.overdue)}
@@ -519,6 +678,10 @@ function renderJiraResults(data) {
       ${jiraDurationChart(data.stageAverages,'averageDays','name','code')}
     </section>`;
 
+  renderJiraTrend(data);
+  renderJiraVariantAssignees(data);
+  loadJiraFollowUpAnalysis(data);
+
   byId('jira-copy-jql').onclick = async () => {
     try { await navigator.clipboard.writeText(data.query); toast('JQL已复制。'); }
     catch { toast('浏览器未允许复制，请从查询口径中手动复制JQL。', 'error'); }
@@ -526,9 +689,18 @@ function renderJiraResults(data) {
   results.querySelectorAll('[data-jira-stage]').forEach(button => button.onclick = () => {
     const code = button.dataset.jiraStage;
     const stage = data.funnel.find(x => x.code === code);
-    openJiraDetails(`${stage.name} · ${stage.count}项`, data.issues.filter(x => x.stageCode === code), code === 'closed' ? 'closure' : 'stage');
+    openJiraDetails(`${stage.name}累计到达 · ${stage.count}项`, data.issues.filter(x => x.maxReachedStageOrder >= stage.order), code === 'closed' ? 'closure' : 'stage');
   });
   results.querySelectorAll('.jira-funnel-layer').forEach(layer => layer.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); layer.onclick(); } });
+  results.querySelectorAll('[data-jira-trend-range]').forEach(button=>button.onclick=()=>{jiraBoardState.trendRange=button.dataset.jiraTrendRange;renderJiraTrend(data);});
+  results.querySelectorAll('[data-jira-variant-mode]').forEach(button=>button.onclick=()=>{jiraBoardState.variantMode=button.dataset.jiraVariantMode;renderJiraVariantAssignees(data);});
+  results.querySelectorAll('[data-jira-variant]').forEach(button=>button.onclick=()=>{
+    const key=button.dataset.jiraVariant;
+    const issues=data.issues.filter(issue=>issue.stageCode!=='closed'&&issue.variantKey===key);
+    const label=key==='LIDAR'?'LiDAR':key==='ADS'?'ADS':'其他/未填写';
+    openJiraDetails(`${label}未关闭问题 · ${issues.length}项`,issues,'stage');
+  });
+  bindJiraKeyboardClicks(results);
   results.querySelectorAll('[data-jira-overdue]').forEach(button => button.onclick = () => {
     const code = button.dataset.jiraOverdue;
     const item = data.overdue.find(x => x.code === code);
@@ -575,15 +747,15 @@ function jiraAssigneeChart(items) {
   return `<div class="jira-mini-bars">${items.slice(0,8).map(item=>`<div><span>${esc(item[0])}</span><i><b style="width:${item[1]/max*100}%"></b></i><strong>${item[1]}</strong></div>`).join('')}</div>`;
 }
 
-function openJiraDetails(title, items, overdueMode) {
+function openJiraDetails(title, items, overdueMode, { compact = false } = {}) {
   let page = 1;
   const pageSize = 50;
   const severity = jiraDistribution(items, 'severityLabel', '未设置');
   const assignees = jiraDistribution(items, 'assignee', '未分配');
-  modalRoot.innerHTML = `<div class="modal-backdrop jira-detail-backdrop"><div class="jira-detail-modal"><div class="jira-detail-head"><div><span>DRILL DOWN</span><h3>${esc(title)}</h3><p>当前穿透范围共 ${jiraNumber(items.length)} 项，导出将包含全部明细及最新评论。</p></div><div class="jira-detail-actions"><button type="button" class="btn btn-light btn-sm" data-jira-export ${items.length?'':'disabled'}>导出CSV</button><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div></div><div id="jira-detail-body"></div></div></div>`;
+  modalRoot.innerHTML = `<div class="modal-backdrop jira-detail-backdrop"><div class="jira-detail-modal"><div class="jira-detail-head"><div><span>DRILL DOWN</span><h3>${esc(title)}</h3><p>当前穿透范围共 ${jiraNumber(items.length)} 项，${compact?'导出包含看板要求的六项核心字段。':'导出将包含全部明细及最新评论。'}</p></div><div class="jira-detail-actions"><button type="button" class="btn btn-light btn-sm jira-export-button" data-jira-export ${items.length?'':'disabled'}><span>↓</span> 导出CSV</button><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div></div><div id="jira-detail-body"></div></div></div>`;
   const close = () => modalRoot.replaceChildren();
   modalRoot.querySelector('.jira-detail-close').onclick = close;
-  modalRoot.querySelector('[data-jira-export]').onclick = event => exportJiraDetails(title,items,overdueMode,event.currentTarget);
+  modalRoot.querySelector('[data-jira-export]').onclick = event => exportJiraDetails(title,items,overdueMode,event.currentTarget,{compact});
   modalRoot.querySelector('.jira-detail-backdrop').onclick = event => { if (event.target.classList.contains('jira-detail-backdrop')) close(); };
 
   const renderPage = async () => {
@@ -593,14 +765,18 @@ function openJiraDetails(title, items, overdueMode) {
     const visible = items.slice((page - 1) * pageSize, page * pageSize);
     byId('jira-detail-body').innerHTML = items.length ? `
       <div class="jira-detail-breakdowns"><div><div><strong>严重等级分布</strong><small>按当前明细范围统计</small></div><section>${jiraPieChart(severity)}</section></div><div><div><strong>处理人分布</strong><small>按问题数量从高到低</small></div><section>${jiraAssigneeChart(assignees)}</section></div></div>
-      <div class="jira-detail-table-wrap"><table><thead><tr><th>严重等级</th><th>Jira编号 / 标题</th><th>当前处理人</th><th>当前状态</th><th>最新结论</th><th>是否超时</th></tr></thead><tbody>${visible.map(issue => jiraIssueRow(issue, overdueMode)).join('')}</tbody></table></div>
+      <div class="jira-detail-table-wrap"><table><thead>${compact?'<tr><th>Jira编号</th><th>标题</th><th>严重等级</th><th>当前处理人</th><th>当前状态</th><th>所属阶段</th></tr>':'<tr><th>严重等级</th><th>Jira编号 / 标题</th><th>当前处理人</th><th>当前状态</th><th>最新结论</th><th>是否超时</th></tr>'}</thead><tbody>${visible.map(issue => compact?jiraCompactIssueRow(issue):jiraIssueRow(issue, overdueMode)).join('')}</tbody></table></div>
       <div class="jira-detail-pagination"><span>共 ${jiraNumber(items.length)} 项 · 第 ${page}/${totalPages} 页</span><div><button type="button" class="btn btn-light btn-sm" data-page="prev" ${page <= 1 ? 'disabled' : ''}>上一页</button><button type="button" class="btn btn-light btn-sm" data-page="next" ${page >= totalPages ? 'disabled' : ''}>下一页</button></div></div>`
       : jiraNoData('该范围内暂无问题');
     byId('jira-detail-body').querySelector('[data-page="prev"]')?.addEventListener('click', () => { page -= 1; renderPage(); });
     byId('jira-detail-body').querySelector('[data-page="next"]')?.addEventListener('click', () => { page += 1; renderPage(); });
-    await loadJiraComments(visible.map(x => x.key));
+    if(!compact)await loadJiraComments(visible.map(x => x.key));
   };
   renderPage();
+}
+
+function jiraCompactIssueRow(issue) {
+  return `<tr><td><a href="${esc(issue.url)}" target="_blank" rel="noopener noreferrer">${esc(issue.key)}</a></td><td><strong>${esc(issue.summary)}</strong></td><td><span class="jira-severity ${esc(issue.severityKey.toLowerCase())}">${esc(issue.severityLabel)}</span></td><td>${esc(issue.assignee)}</td><td><span class="jira-status-dot" style="--stage:${jiraStageColors[issue.stageCode]||jiraStageColors.other}"></span>${esc(issue.status)}</td><td>${esc(issue.stageName)}</td></tr>`;
 }
 
 function jiraIssueRow(issue, overdueMode) {
@@ -622,20 +798,25 @@ function jiraCommentHtml(comment) {
   return `<p>${esc(comment.body)}</p><small>${esc(comment.author || '未知用户')} · ${esc(fmtDate(comment.created))}</small>`;
 }
 
-async function loadJiraComments(keys) {
-  const missing = [...new Set(keys)].filter(key => !jiraBoardState.commentCache.has(key));
+async function loadJiraComments(keys,onProgress=null,generation=jiraBoardState.commentGeneration) {
+  const unique=[...new Set(keys)],missing=unique.filter(key => !jiraBoardState.commentCache.has(key));
+  let completed=unique.length-missing.length;onProgress?.(completed,unique.length);
   if (!missing.length) return;
   for (let index=0;index<missing.length;index+=100) {
+    if(generation!==jiraBoardState.commentGeneration)return;
     const batch=missing.slice(index,index+100);
     try {
       const response = await api('/internal/jira-board/comments', {
         method: 'POST',
         body: JSON.stringify({ connection: jiraConnection(), cutoffDate: jiraBoardState.analysis.cutoffDate, issueKeys: batch })
       });
+      if(generation!==jiraBoardState.commentGeneration)return;
       response.items.forEach(item => jiraBoardState.commentCache.set(item.key, item));
     } catch (error) {
+      if(generation!==jiraBoardState.commentGeneration)return;
       batch.forEach(key => jiraBoardState.commentCache.set(key, { body: null, error: error.message }));
     }
+    completed+=batch.length;onProgress?.(completed,unique.length);
   }
   missing.forEach(key => {
     const cell = modalRoot.querySelector(`[data-comment-key="${CSS.escape(key)}"]`);
@@ -649,13 +830,14 @@ function jiraCsvCell(value) {
   return `"${text.replaceAll('"','""')}"`;
 }
 
-async function exportJiraDetails(title,items,overdueMode,button) {
+async function exportJiraDetails(title,items,overdueMode,button,{compact=false}={}) {
   if (!items.length) return;
   const original=button.textContent;
-  button.disabled=true;button.textContent='准备最新评论…';
-  await loadJiraComments(items.map(x=>x.key));
-  const headers=['Jira编号','标题','严重等级','当前处理人','当前状态','所属阶段','最新结论','评论人','评论时间','创建时间','关闭时间','阶段停留天数','阶段时限','阶段超时天数','关闭周期天数','关闭总周期时限','关闭超时天数'];
+  button.disabled=true;button.textContent=compact?'正在导出…':'准备最新评论…';
+  if(!compact)await loadJiraComments(items.map(x=>x.key));
+  const headers=compact?['Jira编号','标题','严重等级','当前处理人','当前状态','所属阶段']:['Jira编号','标题','严重等级','当前处理人','当前状态','所属阶段','最新结论','评论人','评论时间','创建时间','关闭时间','阶段停留天数','阶段时限','阶段超时天数','关闭周期天数','关闭总周期时限','关闭超时天数'];
   const rows=items.map(issue=>{
+    if(compact)return [issue.key,issue.summary,issue.severityLabel,issue.assignee,issue.status,issue.stageName];
     const comment=jiraBoardState.commentCache.get(issue.key)||{};
     return [issue.key,issue.summary,issue.severityLabel,issue.assignee,issue.status,issue.stageName,comment.error?`最新评论加载失败：${comment.error}`:(comment.body||''),comment.author||'',comment.created||'',issue.createdAt,issue.closedAt||'',issue.stageElapsedDays,issue.stageLimitDays??'',issue.stageOverdueDays,issue.closureElapsedDays,issue.closureLimitDays??'',issue.closureOverdueDays];
   });

@@ -13,6 +13,7 @@ public sealed class JiraBoardAnalysisRequest
     public JiraConnectionRequest Connection { get; set; } = new();
     public string CutoffDate { get; set; } = "";
     public string SeverityFieldId { get; set; } = "priority";
+    public string VariantFieldId { get; set; } = "";
     public string? AdditionalJql { get; set; }
 }
 
