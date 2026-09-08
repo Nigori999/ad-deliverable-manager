@@ -33,6 +33,7 @@ public sealed class JiraQueryPresetRequest
     public string ProjectKey { get; set; } = "";
     public string Name { get; set; } = "";
     public string SeverityFieldId { get; set; } = "";
+    public string VariantFieldId { get; set; } = "";
     public List<JiraQueryConditionRequest> Conditions { get; set; } = [];
     public string AdditionalJql { get; set; } = "";
     public int Revision { get; set; }

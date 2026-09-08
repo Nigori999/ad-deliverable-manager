@@ -15,10 +15,21 @@ public sealed class JiraStandardsController : ControllerBase
     public JiraStandardsController(JiraConfigurationRepository repository) => _repository = repository;
 
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct) => Ok(new { items = await _repository.ListStandardsAsync(ct) });
+    public async Task<IActionResult> List(CancellationToken ct)
+    {
+        try { return Ok(new { items = await _repository.ListStandardsAsync(ct) }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+    }
 
     [HttpGet("template")]
     public IActionResult Template() => Ok(_repository.GetTemplate());
+
+    [HttpGet("connection")]
+    public async Task<IActionResult> Connection(CancellationToken ct)
+    {
+        try { return Ok(await _repository.GetGlobalConfigurationViewAsync(ct)); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+    }
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> Detail(int id, CancellationToken ct)

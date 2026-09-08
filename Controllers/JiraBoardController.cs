@@ -19,8 +19,12 @@ public sealed class JiraBoardController : ControllerBase
         _configuration = configuration;
     }
 
+    [HttpGet("projects")]
+    public async Task<IActionResult> Projects(CancellationToken ct) =>
+        await ExecuteAsync(() => _service.GetProjectsAsync(ct));
+
     [HttpPost("metadata")]
-    public async Task<IActionResult> Metadata([FromBody] JiraConnectionRequest request, CancellationToken ct) =>
+    public async Task<IActionResult> Metadata([FromBody] JiraProjectRequest request, CancellationToken ct) =>
         await ExecuteAsync(() => _service.GetMetadataAsync(request, ct));
 
     [HttpPost("analyze")]
@@ -32,10 +36,11 @@ public sealed class JiraBoardController : ControllerBase
         await ExecuteAsync(() => _service.GetLatestCommentsAsync(request, ct));
 
     [HttpGet("presets")]
-    public async Task<IActionResult> Presets([FromQuery] string baseUrl, [FromQuery] string projectKey, CancellationToken ct)
+    public async Task<IActionResult> Presets(CancellationToken ct)
     {
-        try { return Ok(new { items = await _configuration.ListPresetsAsync(User.GetUserId(), baseUrl, projectKey, ct) }); }
+        try { return Ok(new { items = await _configuration.ListPresetsAsync(User.GetUserId(), ct) }); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
     }
 
     [HttpPost("presets")]
@@ -66,6 +71,7 @@ public sealed class JiraBoardController : ControllerBase
     {
         try { return Ok(await action()); }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
         catch (JiraBoardException ex) { return StatusCode(StatusCodes.Status502BadGateway, new { message = ex.Message }); }
     }
 }

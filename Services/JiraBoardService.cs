@@ -32,9 +32,52 @@ public sealed partial class JiraBoardService
         _configuration = configuration;
     }
 
-    public async Task<object> GetMetadataAsync(JiraConnectionRequest request, CancellationToken ct = default)
+    public async Task<object> GetProjectsAsync(CancellationToken ct = default)
     {
-        var connection = ValidateConnection(request);
+        var global = await _configuration.RequireGlobalConnectionAsync(ct);
+        var connection = ValidateConnection(global.BaseUrl, global.Username, global.Password, "", false);
+        using var server = await GetJsonAsync(connection, "serverInfo", ct);
+        using var projects = await GetJsonAsync(connection, "project", ct);
+        var items = projects.RootElement.ValueKind == JsonValueKind.Array
+            ? projects.RootElement.EnumerateArray()
+                .Select(x => new { key = GetString(x, "key") ?? "", name = GetString(x, "name") ?? GetString(x, "key") ?? "" })
+                .Where(x => x.key.Length > 0)
+                .OrderBy(x => x.key, StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+            : [];
+        return new
+        {
+            configured = true,
+            server = new { title = GetString(server.RootElement, "serverTitle") ?? "Jira Server", version = GetString(server.RootElement, "version") ?? "未知版本" },
+            projects = items
+        };
+    }
+
+    public async Task<object> TestConnectionAsync(JiraGlobalConfigurationRequest request, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var password = request.Password;
+        if (string.IsNullOrEmpty(password))
+        {
+            var existing = await _configuration.GetGlobalConnectionAsync(ct);
+            password = existing?.Password ?? "";
+        }
+        var connection = ValidateConnection(request.BaseUrl, request.Username, password, "", false);
+        using var server = await GetJsonAsync(connection, "serverInfo", ct);
+        using var projects = await GetJsonAsync(connection, "project", ct);
+        var projectCount = projects.RootElement.ValueKind == JsonValueKind.Array ? projects.RootElement.GetArrayLength() : 0;
+        return new
+        {
+            title = GetString(server.RootElement, "serverTitle") ?? "Jira Server",
+            version = GetString(server.RootElement, "version") ?? "未知版本",
+            projectCount
+        };
+    }
+
+    public async Task<object> GetMetadataAsync(JiraProjectRequest request, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var connection = await ConnectionForProjectAsync(request.ProjectKey, ct);
         using var server = await GetJsonAsync(connection, "serverInfo", ct);
         using var project = await GetJsonAsync(connection, $"project/{Uri.EscapeDataString(connection.ProjectKey)}", ct);
         using var fields = await GetJsonAsync(connection, "field", ct);
@@ -51,9 +94,18 @@ public sealed partial class JiraBoardService
         }
         catch (Exception ex) when (ex is JiraBoardException or InvalidOperationException)
         {
-            projectFieldSource = allFields.ToArray();
-            projectFieldsScoped = false;
-            projectFieldWarning = "未能按项目范围读取表单字段，已临时显示全部 Jira 字段。请确认当前账号具有该项目的创建问题权限。";
+            try
+            {
+                projectFieldSource = await GetIssueScopedProjectFieldsAsync(connection, allFields, ct);
+                if (projectFieldSource.Length == 0) throw new InvalidOperationException("当前项目暂无可用的问题字段。");
+                projectFieldWarning = "当前账号无法读取项目创建表单，已改为仅显示该项目问题中可见的字段。";
+            }
+            catch (Exception fallbackEx) when (fallbackEx is JiraBoardException or InvalidOperationException)
+            {
+                projectFieldSource = [];
+                projectFieldsScoped = false;
+                projectFieldWarning = "无法读取当前项目的表单字段，不会回退显示其他项目字段。请确认账号具有该项目的查看或创建问题权限。";
+            }
         }
         var projectFieldItems = ToFieldResponse(projectFieldSource);
         var standard = await _configuration.GetEffectiveStandardAsync(connection.BaseUrl, connection.ProjectKey, ct);
@@ -103,7 +155,8 @@ public sealed partial class JiraBoardService
 
     public async Task<object> AnalyzeAsync(JiraBoardAnalysisRequest request, CancellationToken ct = default)
     {
-        var connection = ValidateConnection(request.Connection);
+        ArgumentNullException.ThrowIfNull(request);
+        var connection = await ConnectionForProjectAsync(request.ProjectKey, ct);
         var cutoffDate = ValidateCutoffDate(request.CutoffDate);
         var severityFieldId = ValidateFieldId(request.SeverityFieldId);
         var variantFieldId = ValidateFieldId(request.VariantFieldId, "ECU Variant字段");
@@ -273,7 +326,8 @@ public sealed partial class JiraBoardService
 
     public async Task<object> GetLatestCommentsAsync(JiraBoardCommentRequest request, CancellationToken ct = default)
     {
-        var connection = ValidateConnection(request.Connection);
+        ArgumentNullException.ThrowIfNull(request);
+        var connection = await ConnectionForProjectAsync(request.ProjectKey, ct);
         var cutoffDate = ValidateCutoffDate(request.CutoffDate);
         using var server = await GetJsonAsync(connection, "serverInfo", ct);
         var serverNow = ParseJiraDate(GetString(server.RootElement, "serverTime")) ?? DateTimeOffset.Now;
@@ -448,6 +502,7 @@ public sealed partial class JiraBoardService
         issue.ClosureElapsedDays,
         issue.ClosureLimitDays,
         issue.ClosureOverdueDays,
+        issue.CompletedStageDays,
         issue.HistoryTruncated
     };
 
@@ -503,6 +558,20 @@ public sealed partial class JiraBoardService
         return version is not null && version < new Version(8, 4)
             ? await GetLegacyProjectFieldsAsync(connection, ct)
             : await GetPagedProjectFieldsAsync(connection, ct);
+    }
+
+    private async Task<FieldMeta[]> GetIssueScopedProjectFieldsAsync(ConnectionSettings connection, IReadOnlyList<FieldMeta> allFields, CancellationToken ct)
+    {
+        var jql = $"project = \"{EscapeJql(connection.ProjectKey)}\" ORDER BY created DESC";
+        using var page = await GetJsonAsync(connection,
+            $"search?jql={Uri.EscapeDataString(jql)}&startAt=0&maxResults=1&fields=*all", ct);
+        if (!page.RootElement.TryGetProperty("issues", out var issues) || issues.ValueKind != JsonValueKind.Array)
+            return [];
+        var issue = issues.EnumerateArray().FirstOrDefault();
+        if (issue.ValueKind != JsonValueKind.Object || !issue.TryGetProperty("fields", out var fields) || fields.ValueKind != JsonValueKind.Object)
+            return [];
+        var ids = fields.EnumerateObject().Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return allFields.Where(x => ids.Contains(x.Id)).ToArray();
     }
 
     private async Task<FieldMeta[]> GetPagedProjectFieldsAsync(ConnectionSettings connection, CancellationToken ct)
@@ -659,19 +728,24 @@ public sealed partial class JiraBoardService
         return $"Jira 请求失败（HTTP {(int)status}）。";
     }
 
-    private static ConnectionSettings ValidateConnection(JiraConnectionRequest request)
+    private async Task<ConnectionSettings> ConnectionForProjectAsync(string? projectKey, CancellationToken ct)
     {
-        if (request is null) throw new ArgumentException("请填写 Jira 连接信息。");
-        if (!Uri.TryCreate(request.BaseUrl?.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        var global = await _configuration.RequireGlobalConnectionAsync(ct);
+        return ValidateConnection(global.BaseUrl, global.Username, global.Password, projectKey, true);
+    }
+
+    private static ConnectionSettings ValidateConnection(string? baseUrlValue, string? usernameValue, string? passwordValue, string? projectKeyValue, bool requireProject)
+    {
+        if (!Uri.TryCreate(baseUrlValue?.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
             throw new ArgumentException("Jira 地址必须是完整的 HTTP 或 HTTPS 地址。");
         if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
             throw new ArgumentException("Jira 地址不能包含账号、查询参数或锚点。");
-        if (string.IsNullOrWhiteSpace(request.Username)) throw new ArgumentException("请填写 Jira 账号。");
-        if (string.IsNullOrWhiteSpace(request.Password)) throw new ArgumentException("请填写 Jira 密码。");
-        var projectKey = request.ProjectKey?.Trim().ToUpperInvariant() ?? "";
-        if (!ProjectKeyRegex().IsMatch(projectKey)) throw new ArgumentException("Jira 项目编号格式无效。");
+        if (string.IsNullOrWhiteSpace(usernameValue)) throw new ArgumentException("请填写 Jira 账号。");
+        if (string.IsNullOrWhiteSpace(passwordValue)) throw new ArgumentException("请填写 Jira 密码。");
+        var projectKey = projectKeyValue?.Trim().ToUpperInvariant() ?? "";
+        if (requireProject && !ProjectKeyRegex().IsMatch(projectKey)) throw new ArgumentException("Jira 项目编号格式无效。");
         var baseUrl = uri.GetLeftPart(UriPartial.Path).TrimEnd('/');
-        return new(baseUrl, request.Username.Trim(), request.Password, projectKey);
+        return new(baseUrl, usernameValue.Trim(), passwordValue, projectKey);
     }
 
     private static DateOnly ValidateCutoffDate(string value)

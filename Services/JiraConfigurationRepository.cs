@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AdDeliverableManager.Models;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.Sqlite;
 
 namespace AdDeliverableManager.Services;
@@ -13,8 +14,13 @@ public sealed partial class JiraConfigurationRepository
     private static readonly HashSet<string> QueryOperators = new(StringComparer.OrdinalIgnoreCase)
         { "=", "!=", "~", "!~", "IN", "NOT IN", "IS EMPTY", "IS NOT EMPTY" };
     private readonly DatabaseService _database;
+    private readonly IDataProtector _protector;
 
-    public JiraConfigurationRepository(DatabaseService database) => _database = database;
+    public JiraConfigurationRepository(DatabaseService database, IDataProtectionProvider dataProtection)
+    {
+        _database = database;
+        _protector = dataProtection.CreateProtector("AdDeliverableManager.JiraCredentials.v1");
+    }
 
     public object GetTemplate() => new
     {
@@ -25,9 +31,11 @@ public sealed partial class JiraConfigurationRepository
 
     public async Task<IReadOnlyList<JiraProjectStandardDefinition>> ListStandardsAsync(CancellationToken ct = default)
     {
+        var global = await RequireGlobalConnectionAsync(ct);
         await using var connection = await _database.OpenConnectionAsync(ct);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id,JiraBaseUrl,ProjectKey,ProjectName,IsEnabled,StagesJson,ClosureLimitsJson,RuleNote,CreatedBy,CreatedAt,UpdatedBy,UpdatedAt,Revision FROM JiraProjectStandards ORDER BY IsEnabled DESC,ProjectKey,ProjectName";
+        command.CommandText = "SELECT Id,JiraBaseUrl,ProjectKey,ProjectName,IsEnabled,StagesJson,ClosureLimitsJson,RuleNote,CreatedBy,CreatedAt,UpdatedBy,UpdatedAt,Revision FROM JiraProjectStandards WHERE JiraBaseUrl=$url ORDER BY IsEnabled DESC,ProjectKey,ProjectName";
+        command.Parameters.AddWithValue("$url", global.BaseUrl);
         return await ReadStandardsAsync(command, ct);
     }
 
@@ -53,6 +61,8 @@ public sealed partial class JiraConfigurationRepository
 
     public async Task<int> CreateStandardAsync(JiraProjectStandardRequest request, string operatorName, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        request.JiraBaseUrl = (await RequireGlobalConnectionAsync(ct)).BaseUrl;
         var normalized = ValidateStandard(request, requireRevision: false);
         await using var connection = await _database.OpenConnectionAsync(ct);
         using var transaction = connection.BeginTransaction();
@@ -79,6 +89,8 @@ public sealed partial class JiraConfigurationRepository
 
     public async Task UpdateStandardAsync(int id, JiraProjectStandardRequest request, string operatorName, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        request.JiraBaseUrl = (await RequireGlobalConnectionAsync(ct)).BaseUrl;
         var normalized = ValidateStandard(request, requireRevision: true);
         await using var connection = await _database.OpenConnectionAsync(ct);
         using var transaction = connection.BeginTransaction();
@@ -137,38 +149,42 @@ public sealed partial class JiraConfigurationRepository
         await transaction.CommitAsync(ct);
     }
 
-    public async Task<IReadOnlyList<object>> ListPresetsAsync(int userId, string baseUrl, string projectKey, CancellationToken ct = default)
+    public async Task<IReadOnlyList<object>> ListPresetsAsync(int userId, CancellationToken ct = default)
     {
-        var identity = NormalizeProjectIdentity(baseUrl, projectKey);
+        var global = await GetGlobalConnectionAsync(ct);
+        if (global is null) return [];
         await using var connection = await _database.OpenConnectionAsync(ct);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id,Name,SeverityFieldId,ConditionsJson,AdditionalJql,UpdatedAt,Revision FROM JiraQueryPresets WHERE UserId=$user AND JiraBaseUrl=$url AND ProjectKey=$project ORDER BY UpdatedAt DESC,Name";
+        command.CommandText = "SELECT Id,Name,ProjectKey,SeverityFieldId,VariantFieldId,ConditionsJson,AdditionalJql,UpdatedAt,Revision FROM JiraQueryPresets WHERE UserId=$user AND JiraBaseUrl=$url ORDER BY UpdatedAt DESC,ProjectKey,Name";
         command.Parameters.AddWithValue("$user", userId);
-        command.Parameters.AddWithValue("$url", identity.BaseUrl);
-        command.Parameters.AddWithValue("$project", identity.ProjectKey);
+        command.Parameters.AddWithValue("$url", global.BaseUrl);
         var result = new List<object>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct)) result.Add(new
         {
             id = reader.GetInt32(0),
             name = reader.GetString(1),
-            severityFieldId = reader.GetString(2),
-            conditions = DeserializeConditions(reader.GetString(3)),
-            additionalJql = reader.GetString(4),
-            updatedAt = reader.GetString(5),
-            revision = reader.GetInt32(6)
+            projectKey = reader.GetString(2),
+            severityFieldId = reader.GetString(3),
+            variantFieldId = reader.GetString(4),
+            conditions = DeserializeConditions(reader.GetString(5)),
+            additionalJql = reader.GetString(6),
+            updatedAt = reader.GetString(7),
+            revision = reader.GetInt32(8)
         });
         return result;
     }
 
     public async Task<int> CreatePresetAsync(int userId, JiraQueryPresetRequest request, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        request.JiraBaseUrl = (await RequireGlobalConnectionAsync(ct)).BaseUrl;
         var normalized = ValidatePreset(request, requireRevision: false);
         await using var connection = await _database.OpenConnectionAsync(ct);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO JiraQueryPresets(UserId,JiraBaseUrl,ProjectKey,Name,SeverityFieldId,ConditionsJson,AdditionalJql,CreatedAt,UpdatedAt,Revision)
-            VALUES($user,$url,$project,$name,$severity,$conditions,$jql,$now,$now,1); SELECT last_insert_rowid();
+            INSERT INTO JiraQueryPresets(UserId,JiraBaseUrl,ProjectKey,Name,SeverityFieldId,VariantFieldId,ConditionsJson,AdditionalJql,CreatedAt,UpdatedAt,Revision)
+            VALUES($user,$url,$project,$name,$severity,$variant,$conditions,$jql,$now,$now,1); SELECT last_insert_rowid();
             """;
         BindPreset(command, userId, normalized);
         try { return Convert.ToInt32(await command.ExecuteScalarAsync(ct)); }
@@ -177,11 +193,13 @@ public sealed partial class JiraConfigurationRepository
 
     public async Task UpdatePresetAsync(int userId, int id, JiraQueryPresetRequest request, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        request.JiraBaseUrl = (await RequireGlobalConnectionAsync(ct)).BaseUrl;
         var normalized = ValidatePreset(request, requireRevision: true);
         await using var connection = await _database.OpenConnectionAsync(ct);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            UPDATE JiraQueryPresets SET JiraBaseUrl=$url,ProjectKey=$project,Name=$name,SeverityFieldId=$severity,
+            UPDATE JiraQueryPresets SET JiraBaseUrl=$url,ProjectKey=$project,Name=$name,SeverityFieldId=$severity,VariantFieldId=$variant,
                 ConditionsJson=$conditions,AdditionalJql=$jql,UpdatedAt=$now,Revision=Revision+1
             WHERE Id=$id AND UserId=$user AND Revision=$revision;
             """;
@@ -269,6 +287,8 @@ public sealed partial class JiraConfigurationRepository
         if (requireRevision && request.Revision <= 0) throw new ArgumentException("查询方案版本无效，请重新加载。");
         var severity = request.SeverityFieldId?.Trim() ?? "";
         if (!FieldIdRegex().IsMatch(severity)) throw new ArgumentException("严重等级字段无效。");
+        var variant = request.VariantFieldId?.Trim() ?? "";
+        if (!FieldIdRegex().IsMatch(variant)) throw new ArgumentException("ECU Variant字段无效。");
         if ((request.AdditionalJql ?? "").Length > 1500) throw new ArgumentException("附加JQL不能超过1500个字符。");
         if ((request.Conditions?.Count ?? 0) > 30) throw new ArgumentException("一个查询方案最多保存30个字段条件。");
         if (request.Conditions?.Any(x => x is null) == true) throw new ArgumentException("查询方案包含无效条件。");
@@ -287,7 +307,7 @@ public sealed partial class JiraConfigurationRepository
         }
         return new JiraQueryPresetRequest
         {
-            JiraBaseUrl = identity.BaseUrl, ProjectKey = identity.ProjectKey, Name = name, SeverityFieldId = severity,
+            JiraBaseUrl = identity.BaseUrl, ProjectKey = identity.ProjectKey, Name = name, SeverityFieldId = severity, VariantFieldId = variant,
             Conditions = conditions, AdditionalJql = (request.AdditionalJql ?? "").Trim(), Revision = request.Revision
         };
     }
@@ -323,6 +343,7 @@ public sealed partial class JiraConfigurationRepository
         command.Parameters.AddWithValue("$project", request.ProjectKey);
         command.Parameters.AddWithValue("$name", request.Name);
         command.Parameters.AddWithValue("$severity", request.SeverityFieldId);
+        command.Parameters.AddWithValue("$variant", request.VariantFieldId);
         command.Parameters.AddWithValue("$conditions", JsonSerializer.Serialize(request.Conditions, JsonOptions));
         command.Parameters.AddWithValue("$jql", request.AdditionalJql);
         command.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O"));

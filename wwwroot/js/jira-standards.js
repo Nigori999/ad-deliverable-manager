@@ -2,11 +2,11 @@ const jiraStandardStageNames = { new:'新增', confirm:'问题确认', analysis:
 const jiraStandardSeverityCodes = ['S','A','B','C'];
 
 async function renderJiraStandards() {
-  setPage('JIRA时效标准', '按Jira服务器和项目标识配置状态映射与自然日时效规则');
+  setPage('JIRA时效标准', '按项目标识配置状态映射与自然日时效规则');
   const data = await api('/internal/jira-standards');
   const canManage = hasPermission('JIRA_STANDARD_MANAGE');
   content.innerHTML = `<section class="card jira-standard-page">
-    <div class="card-head"><div><h3>项目时效标准</h3><p class="muted section-note">JIRA看板按“服务器地址＋Project Key”自动匹配唯一启用标准。状态名称不区分大小写。</p></div>${canManage?'<button type="button" id="jira-standard-new" class="btn btn-primary" data-permission="JIRA_STANDARD_MANAGE">+ 新增项目标准</button>':''}</div>
+    <div class="card-head"><div><h3>项目时效标准</h3><p class="muted section-note">服务器地址读取“基础设置”的全局Jira配置；看板按Project Key匹配唯一启用标准。</p></div>${canManage?'<button type="button" id="jira-standard-new" class="btn btn-primary" data-permission="JIRA_STANDARD_MANAGE">+ 新增项目标准</button>':''}</div>
     ${data.items.length ? `<div class="table-wrap"><table><thead><tr><th>项目</th><th>Jira服务器</th><th>阶段状态</th><th>关闭总周期</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${data.items.map(item=>jiraStandardRow(item,canManage)).join('')}</tbody></table></div>` : '<div class="empty">尚未配置JIRA时效标准。新增配置后，对应项目才能生成JIRA看板。</div>'}
   </section>`;
   byId('jira-standard-new')?.addEventListener('click',()=>openJiraStandardEditor());
@@ -37,12 +37,12 @@ async function openJiraStandardDetail(id){
 }
 
 async function openJiraStandardEditor(id=null,copy=false){
-  const source=id?await api(`/internal/jira-standards/${id}`):await api('/internal/jira-standards/template');
-  const item=id?source:{jiraBaseUrl:'',projectKey:'',projectName:'',isEnabled:true,revision:0,...source};
+  const [source,connection]=await Promise.all([id?api(`/internal/jira-standards/${id}`):api('/internal/jira-standards/template'),api('/internal/jira-standards/connection')]);
+  const item=id?source:{jiraBaseUrl:connection.baseUrl||'',projectKey:'',projectName:'',isEnabled:true,revision:0,...source};
   if(copy){item.projectKey='';item.projectName=`${item.projectName} - 副本`;item.revision=0;}
   const title=copy?'复制项目标准':id?'编辑项目标准':'新增项目标准';
   const body=`<form id="jira-standard-form" class="jira-standard-form">
-    <div class="form-grid jira-standard-base"><div class="field"><label>Jira服务器地址 *</label><input name="jiraBaseUrl" type="url" value="${esc(item.jiraBaseUrl||'')}" placeholder="http://jira.company.local/jira" required ${id&&!copy?'readonly':''}></div><div class="field"><label>Project Key *</label><input name="projectKey" value="${esc(item.projectKey||'')}" placeholder="如：AD" required ${id&&!copy?'readonly':''}></div><div class="field"><label>项目名称 *</label><input name="projectName" value="${esc(item.projectName||'')}" required></div></div>
+    <div class="form-grid jira-standard-base"><div class="field"><label>Jira服务器地址</label><input name="jiraBaseUrl" type="url" value="${esc(connection.baseUrl||item.jiraBaseUrl||'')}" readonly><small>统一读取基础设置，不能在此修改。</small></div><div class="field"><label>Project Key *</label><input name="projectKey" value="${esc(item.projectKey||'')}" placeholder="如：AD" required ${id&&!copy?'readonly':''}></div><div class="field"><label>项目名称 *</label><input name="projectName" value="${esc(item.projectName||'')}" required></div></div>
     <label class="check-line"><input type="checkbox" name="isEnabled" ${item.isEnabled?'checked':''}>启用该项目标准</label>
     <div class="jira-standard-section"><div><h4>阶段状态与时效</h4><p>状态用换行或英文逗号分隔；时效单位为自然日。一个状态不能同时属于多个阶段。</p></div>
       <div class="jira-standard-matrix"><div class="jira-standard-matrix-head"><span>处理阶段</span><span>对应Jira状态</span>${jiraStandardSeverityCodes.map(x=>`<span>${x}级</span>`).join('')}</div>${item.stages.map(stage=>jiraStandardStageEditor(stage)).join('')}</div>
