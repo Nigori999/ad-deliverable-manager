@@ -347,7 +347,6 @@ public sealed partial class JiraConfigurationRepository
         command.Parameters.AddWithValue("$conditions", JsonSerializer.Serialize(request.Conditions, JsonOptions));
         command.Parameters.AddWithValue("$jql", request.AdditionalJql);
         command.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O"));
-        if (request.Revision > 0) command.Parameters.AddWithValue("$revision", request.Revision);
     }
 
     private static async Task<List<JiraProjectStandardDefinition>> ReadStandardsAsync(SqliteCommand command, CancellationToken ct)
