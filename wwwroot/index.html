@@ -12,6 +12,8 @@
   <link rel="stylesheet" href="/css/role-permission-ux.css?v=1.1.0">
   <link rel="stylesheet" href="/css/delivery-schedules.css?v=1.1.0">
   <link rel="stylesheet" href="/css/issue-management.css?v=1.0.0">
+  <link rel="stylesheet" href="/css/jira-board.css?v=1.2.0">
+  <link rel="stylesheet" href="/css/jira-standards.css?v=1.0.0">
   <style>
     .sidebar-group{display:grid;gap:4px}.sidebar-group-title{padding:9px 12px 5px;color:#91a0ba;font-size:12px;font-weight:700}.sidebar-group-title span{margin-right:7px}.sidebar-group-items{display:grid;gap:3px}.sidebar-group-items a{padding-left:24px!important;font-size:13px!important}.sidebar-group-items a.active{box-shadow:inset 3px 0 #6e95ff}
   </style>
@@ -29,6 +31,7 @@
         <a href="#/changes" data-route="changes" data-permission="CHANGE_VIEW"><span>↻</span>变更管理</a>
         <a href="#/analytics" data-route="analytics" data-permission="ANALYTICS_VIEW"><span>◩</span>完整度分析</a>
         <a href="#/issues" data-route="issues" data-permission="ISSUE_VIEW"><span>◉</span>问题管理</a>
+        <a href="#/jira-board" data-route="jira-board" data-permission="JIRA_BOARD_VIEW"><span>◆</span>JIRA看板</a>
         <div class="sidebar-group" data-permission-group="SYSTEM_MANAGEMENT">
           <div class="sidebar-group-title"><span>⚙</span>系统管理</div>
           <div class="sidebar-group-items">
@@ -36,6 +39,7 @@
             <a href="#/roles" data-route="roles" data-permission="ROLE_VIEW"><span>▣</span>角色权限</a>
             <a href="#/dictionaries" data-route="dictionaries" data-permission="DICTIONARY_VIEW"><span>⌘</span>字典管理</a>
             <a href="#/settings" data-route="settings" data-permission="MASTERDATA_VIEW"><span>⚙</span>基础设置</a>
+            <a href="#/jira-standards" data-route="jira-standards" data-permission="JIRA_STANDARD_VIEW"><span>◈</span>JIRA时效标准</a>
             <a href="#/audit-logs" data-route="audit-logs" data-permission="AUDIT_VIEW"><span>≡</span>操作日志</a>
           </div>
         </div>
@@ -63,7 +67,7 @@
   <script src="/js/relations-edit.js?v=1.0.0"></script>
   <script src="/js/changes.js?v=1.0.0"></script>
   <script src="/js/dictionary-settings.js?v=1.1.0"></script>
-  <script src="/js/changes-settings.js?v=1.4.0"></script>
+  <script src="/js/changes-settings.js?v=1.5.0"></script>
   <script src="/js/audit-logs.js?v=1.0.0"></script>
   <script src="/js/users.js?v=1.1.0"></script>
   <script src="/js/product-baselines.js?v=1.1.0"></script>
@@ -72,6 +76,8 @@
   <script src="/js/ui-polish.js?v=1.1.0"></script>
   <script src="/js/analytics.js?v=1.2.0"></script>
   <script src="/js/issue-management.js?v=1.0.0"></script>
+  <script src="/js/jira-board.js?v=1.3.0"></script>
+  <script src="/js/jira-standards.js?v=1.1.0"></script>
   <script src="/js/role-permission-ux.js?v=1.0.0"></script>
 </body>
 </html>

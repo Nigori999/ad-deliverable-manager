@@ -13,4 +13,28 @@ erDiagram
   Deliverables ||--o{ ChangeRecords : changes
   Deliverables ||--o{ LifecycleRecords : lifecycle
   Deliverables ||--o{ DeliverableRelations : relates
+  Users ||--o{ JiraQueryPresets : owns
+  JiraGlobalConfiguration {
+    integer Id PK
+    string BaseUrl
+    string Username
+    string PasswordCipher
+    integer Revision
+  }
+  JiraProjectStandards {
+    integer Id PK
+    string JiraBaseUrl
+    string ProjectKey
+    string StagesJson
+    string ClosureLimitsJson
+  }
+  JiraQueryPresets {
+    integer Id PK
+    integer UserId FK
+    string JiraBaseUrl
+    string ProjectKey
+    string SeverityFieldId
+    string VariantFieldId
+    string ConditionsJson
+  }
 ```
