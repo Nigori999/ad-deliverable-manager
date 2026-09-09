@@ -3,7 +3,7 @@ const jiraBoardState = {
   commentCache: new Map(), commentGeneration: 0, presets: [], editingPresetId: null,
   selectedPresetIds: new Set(), dirty: false, applyingPreset: false,
   trendRange: '90', trendVisible: { created:true, closed:true }, variantMode: 'ADS',
-  assigneeExpanded: false, overdueSort: 'process'
+  assigneeExpanded: false, overdueSort: 'process', pdfReady: false
 };
 
 const jiraStageColors = {
@@ -31,6 +31,7 @@ async function renderJiraBoard() {
   jiraBoardState.variantMode = 'ADS';
   jiraBoardState.assigneeExpanded = false;
   jiraBoardState.overdueSort = 'process';
+  jiraBoardState.pdfReady = false;
   jiraBoardState.commentGeneration += 1;
   jiraBoardState.commentCache.clear();
   content.innerHTML = '<section class="jira-loading"><div class="jira-spinner"></div><strong>正在读取Jira连接和查询方案</strong><span>请稍候…</span></section>';
@@ -631,14 +632,15 @@ function jiraFollowUpChart(items, failedCount) {
 
 async function loadJiraFollowUpAnalysis(data) {
   const host=byId('jira-followup-host');if(!host)return;
+  setJiraPdfReady(false);
   const active=data.issues.filter(issue=>issue.stageCode!=='closed');
-  if(!active.length){host.innerHTML=jiraFollowUpChart([],0);return;}
+  if(!active.length){host.innerHTML=jiraFollowUpChart([],0);setJiraPdfReady(true);return;}
   host.innerHTML='<div class="jira-chart-loading"><div class="jira-spinner"></div><strong>正在核对当日评论</strong><span>0 / '+jiraNumber(active.length)+'</span></div>';
   await loadJiraComments(active,(completed,total)=>{
     if(jiraBoardState.analysis!==data)return;
     const progress=host.querySelector('span');if(progress)progress.textContent=`${jiraNumber(completed)} / ${jiraNumber(total)}`;
   });
-  if(jiraBoardState.analysis!==data||!byId('jira-followup-host'))return;
+  if(jiraBoardState.analysis!==data||byId('jira-followup-host')!==host)return;
   const failed=active.filter(issue=>jiraBoardState.commentCache.get(jiraCommentKey(issue))?.error);
   const items=active.filter(issue=>{const comment=jiraBoardState.commentCache.get(jiraCommentKey(issue));return comment&&!comment.error&&jiraDateKey(comment.created)!==data.cutoffDate;});
   host.innerHTML=jiraFollowUpChart(items,failed.length);
@@ -648,6 +650,102 @@ async function loadJiraFollowUpAnalysis(data) {
     openJiraDetails(`当日未跟进${value==='all'?'':` · ${value}`} · ${detail.length}项`,detail,'stage',{compact:true});
   });
   byId('jira-comment-retry')?.addEventListener('click',()=>{failed.forEach(issue=>jiraBoardState.commentCache.delete(jiraCommentKey(issue)));loadJiraFollowUpAnalysis(data);});
+  setJiraPdfReady(true);
+}
+
+function setJiraPdfReady(ready) {
+  jiraBoardState.pdfReady=ready;
+  const button=byId('jira-export-pdf');
+  if(!button)return;
+  button.disabled=!ready;
+  button.textContent=ready?'导出PDF':'准备PDF数据…';
+}
+
+function jiraPdfFileName(data) {
+  const project=String(data.project||'JIRA').replace(/[\\/:*?\"<>|]+/g,'-').replace(/\s+/g,'_');
+  return `JIRA问题分析_${project}_截至_${data.cutoffDate||jiraToday()}`;
+}
+
+function jiraPdfStyles() {
+  return `
+    :root { color-scheme: light; }
+    html, body { width: 1400px !important; min-width: 1400px !important; margin: 0 !important; overflow: visible !important; background: #f4f6f9 !important; }
+    body { padding: 0 !important; color: #172033; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    .jira-pdf-page { box-sizing: border-box; width: 1400px; padding: 32px; overflow: visible !important; }
+    #jira-board-results, #jira-board-results * { box-sizing: border-box; }
+    #jira-board-results { width: 100%; overflow: visible !important; }
+    .jira-result-head { position: static !important; }
+    .jira-result-actions, .jira-result-jql, .jira-segmented, .jira-show-all, .jira-chart-tooltip { display: none !important; }
+    .jira-chart-warning button { display: none !important; }
+    .jira-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)) !important; }
+    .jira-diagnosis-grid { grid-template-columns: minmax(0, 1.15fr) minmax(350px, .85fr) !important; }
+    .jira-risk-stack { grid-template-columns: minmax(0, 1fr) !important; }
+    .jira-two-column { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    .jira-variant-body { grid-template-columns: minmax(310px, .8fr) minmax(320px, 1.2fr) !important; }
+    .jira-variant-summary { border-right: 1px solid #edf0f4 !important; border-bottom: 0 !important; padding-bottom: 0 !important; }
+    .jira-trend-scroll, .jira-panel, .jira-variant-body { max-width: none !important; overflow: visible !important; }
+    button, [role=\"button\"] { pointer-events: none !important; }
+    * { animation: none !important; transition: none !important; }
+  `;
+}
+
+async function exportJiraBoardPdf() {
+  const data=jiraBoardState.analysis;
+  const source=byId('jira-board-results');
+  if(!data||!source){toast('请先生成JIRA看板。','error');return;}
+  if(!jiraBoardState.pdfReady){toast('正在准备当日跟进数据，请稍候再导出。','error');return;}
+
+  const printWindow=window.open('','_blank');
+  if(!printWindow){toast('浏览器阻止了打印窗口，请允许本站打开弹窗后重试。','error');return;}
+
+  try {
+    const printDocument=printWindow.document;
+    printDocument.open();
+    printDocument.write('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body></body></html>');
+    printDocument.close();
+    printDocument.title=jiraPdfFileName(data);
+
+    const stylesheetLoads=[];
+    document.querySelectorAll('link[rel="stylesheet"], style').forEach(sourceStyle=>{
+      const copy=sourceStyle.cloneNode(true);
+      if(copy.tagName==='LINK'){
+        copy.href=sourceStyle.href;
+        stylesheetLoads.push(new Promise(resolve=>{copy.onload=resolve;copy.onerror=resolve;}));
+      }
+      printDocument.head.appendChild(copy);
+    });
+    const exportStyle=printDocument.createElement('style');
+    exportStyle.textContent=jiraPdfStyles();
+    printDocument.head.appendChild(exportStyle);
+
+    const page=printDocument.createElement('main');
+    page.className='jira-pdf-page';
+    const results=source.cloneNode(true);
+    page.appendChild(results);
+    printDocument.body.appendChild(page);
+
+    await Promise.all(stylesheetLoads);
+    if(printDocument.fonts?.ready)await printDocument.fonts.ready;
+    await new Promise(resolve=>printWindow.requestAnimationFrame(()=>printWindow.requestAnimationFrame(resolve)));
+
+    const pageHeight=Math.ceil(Math.max(page.scrollHeight,page.getBoundingClientRect().height))+2;
+    const maximumSinglePageHeight=18000;
+    if(pageHeight>maximumSinglePageHeight){
+      printWindow.close();
+      toast('看板内容超过单页PDF的安全高度，请缩小查询范围后重试。','error');
+      return;
+    }
+    const pageStyle=printDocument.createElement('style');
+    pageStyle.textContent=`@page { size: 1400px ${pageHeight}px; margin: 0; } @media print { html, body { width: 1400px !important; height: ${pageHeight}px !important; } }`;
+    printDocument.head.appendChild(pageStyle);
+    printWindow.addEventListener('afterprint',()=>printWindow.close(),{once:true});
+    printWindow.focus();
+    printWindow.print();
+  } catch(error) {
+    printWindow.close();
+    console.error('Failed to prepare Jira PDF export.',error);
+    toast('PDF打印内容准备失败，请刷新页面后重试。','error');
+  }
 }
 
 function bindJiraKeyboardClicks(root) {
@@ -672,6 +770,7 @@ function renderJiraTrend(data) {
 }
 
 function renderJiraResults(data) {
+  jiraBoardState.pdfReady=false;
   const warnings = [];
   if (data.truncated) warnings.push(`Jira共返回 ${jiraNumber(data.sourceTotal)} 条，当前看板为保护服务器仅分析前 5,000 条，请缩小查询条件。`);
   if (data.historyTruncated) warnings.push(`有 ${jiraNumber(data.historyTruncated)} 条问题的 Jira 变更历史超过接口单次展开上限，其历史阶段到达及阶段时长可能不完整，建议缩小查询范围后复核。`);
@@ -681,7 +780,7 @@ function renderJiraResults(data) {
   const queryText=data.queries.map(x=>`【${x.preset} / ${x.project}】\n${x.jql}`).join('\n\n');
   const overdueItems=jiraBoardState.overdueSort==='count'?[...data.overdue].sort((a,b)=>b.count-a.count):data.overdue;
   results.innerHTML = `
-    <section class="jira-result-head jira-result-context"><div><h3>${esc(data.project)} · 截至 ${esc(data.cutoffDate)}</h3><p>${data.presetNames.length} 个查询方案 · ${data.projects.length} 个项目 · 数据生成于 ${esc(fmtDate(data.generatedAt))}</p><details class="jira-result-jql"><summary>查看查询口径</summary><pre>${esc(queryText)}</pre></details></div><div class="jira-result-actions"><button type="button" class="btn btn-light btn-sm" id="jira-edit-query">修改查询范围</button><button type="button" class="btn btn-light btn-sm" id="jira-copy-jql">复制JQL</button><button type="button" class="btn btn-primary btn-sm" id="jira-rerun">重新分析</button></div></section>
+    <section class="jira-result-head jira-result-context"><div><h3>${esc(data.project)} · 截至 ${esc(data.cutoffDate)}</h3><p>${data.presetNames.length} 个查询方案 · ${data.projects.length} 个项目 · 数据生成于 ${esc(fmtDate(data.generatedAt))}</p><details class="jira-result-jql"><summary>查看查询口径</summary><pre>${esc(queryText)}</pre></details></div><div class="jira-result-actions"><button type="button" class="btn btn-light btn-sm" id="jira-edit-query">修改查询范围</button><button type="button" class="btn btn-light btn-sm" id="jira-copy-jql">复制JQL</button><button type="button" class="btn btn-light btn-sm" id="jira-export-pdf" disabled>准备PDF数据…</button><button type="button" class="btn btn-primary btn-sm" id="jira-rerun">重新分析</button></div></section>
     ${warnings.map(text => `<div class="jira-warning">${esc(text)}</div>`).join('')}
     <section class="jira-metrics">
       ${jiraMetric('统计问题', data.summary.total, '查询范围内全部问题', 'all')}
@@ -725,6 +824,7 @@ function renderJiraResults(data) {
     catch { toast('浏览器未允许复制，请从查询口径中手动复制JQL。', 'error'); }
   };
   byId('jira-rerun').onclick=runJiraAnalysis;
+  byId('jira-export-pdf').onclick=exportJiraBoardPdf;
   byId('jira-edit-query').onclick=()=>document.querySelector('.jira-config-card').scrollIntoView({behavior:'smooth',block:'start'});
   results.querySelectorAll('[data-jira-stage]').forEach(button => button.onclick = () => {
     const code = button.dataset.jiraStage;
