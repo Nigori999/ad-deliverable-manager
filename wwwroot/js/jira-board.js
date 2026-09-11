@@ -3,7 +3,7 @@ const jiraBoardState = {
   commentCache: new Map(), commentGeneration: 0, presets: [], editingPresetId: null,
   selectedPresetIds: new Set(), dirty: false, applyingPreset: false,
   trendRange: '90', trendVisible: { created:true, closed:true }, variantMode: 'ADS',
-  assigneeExpanded: false, overdueSort: 'process', pdfReady: false
+  assigneeExpanded: false, overdueSort: 'process', pdfReady: false, comparison: null
 };
 
 const jiraStageColors = {
@@ -444,6 +444,11 @@ async function runJiraAnalysis() {
     const details=incomplete.map(item=>{const missing=[];if(!item.projectKey)missing.push('项目编号');if(!item.severityFieldId)missing.push('严重等级字段');if(!item.variantFieldId)missing.push('ECU Variant字段');return `“${item.name}”缺少${missing.join('、')}`;});
     toast(`${details.join('；')}，请先编辑并保存。`,'error');return;
   }
+  for (const group of jiraGroupBy(selected, x=>x.projectKey).values()) {
+    if(new Set(group.map(x=>x.severityFieldId)).size>1) {
+      toast(`项目 ${group[0].projectKey} 的查询方案使用了不同严重等级字段，请统一字段后再合并分析。`,'error');return;
+    }
+  }
   const button = byId('jira-run-analysis');
   button.disabled = true;
   button.textContent = '读取并计算中…';
@@ -451,6 +456,7 @@ async function runJiraAnalysis() {
   try {
     const analyses=await runJiraPresetAnalyses(selected,cutoffDate,button);
     jiraBoardState.analysis = mergeJiraAnalyses(analyses,cutoffDate);
+    jiraBoardState.comparison = {unit:'month',mode:'mom',from:new Date(jiraShiftPeriod(jiraPeriodStart(Date.parse(cutoffDate),'month'),'month',-5)).toISOString().slice(0,10),to:cutoffDate};
     jiraBoardState.commentGeneration += 1;
     jiraBoardState.commentCache.clear();
     renderJiraResults(jiraBoardState.analysis);
@@ -479,7 +485,7 @@ function jiraPercentValue(part,total){return total?Math.round(part*1000/total)/1
 
 function mergeJiraAnalyses(entries,cutoffDate){
   const unique=new Map();
-  entries.forEach(({data,preset})=>(data.issues||[]).forEach(issue=>{const key=`${data.project}|${issue.key}`;if(unique.has(key)){const existing=unique.get(key);if(!existing.sourceSchemes.includes(preset.name))existing.sourceSchemes.push(preset.name);}else unique.set(key,{...issue,projectKey:data.project,projectName:data.standard?.projectName||data.project,sourceSchemes:[preset.name]});}));
+  entries.forEach(({data,preset})=>(data.issues||[]).forEach(issue=>{const key=`${data.project}|${issue.key}`;if(unique.has(key)){const existing=unique.get(key);if(!existing.sourceSchemes.includes(preset.name))existing.sourceSchemes.push(preset.name);}else unique.set(key,{...issue,projectKey:data.project,projectName:data.standard?.projectName||data.project,sourceSchemes:[preset.name],reviewContext:{projectKey:data.project,issueKey:issue.key,cutoffDate,severityFieldId:preset.severityFieldId,variantFieldId:preset.variantFieldId}});}));
   const issues=[...unique.values()],stages=[['new','新增'],['confirm','问题确认'],['analysis','原因分析'],['action','措施确认'],['verify','测试验证'],['closed','问题关闭']];
   const closed=issues.filter(x=>x.stageCode==='closed'),active=issues.filter(x=>x.stageCode!=='closed');
   const funnel=stages.map(([code,name],order)=>{const count=issues.filter(x=>x.maxReachedStageOrder>=order).length,previous=order?issues.filter(x=>x.maxReachedStageOrder>=order-1).length:issues.length;return{code,name,order,count,share:jiraPercentValue(count,issues.length),previousConversion:jiraPercentValue(count,previous),dropFromPrevious:order?Math.max(0,previous-count):0};});
@@ -488,11 +494,11 @@ function mergeJiraAnalyses(entries,cutoffDate){
   const severityGroups=jiraGroupBy(issues,x=>`${x.severityKey}|${x.severityLabel}`);
   const closureRates=[...severityGroups.values()].map(group=>({severity:group[0].severityLabel,severityKey:group[0].severityKey,total:group.length,closed:group.filter(x=>x.stageCode==='closed').length,rate:jiraPercentValue(group.filter(x=>x.stageCode==='closed').length,group.length)})).sort((a,b)=>jiraSeverityOrder(a.severityKey)-jiraSeverityOrder(b.severityKey)||a.severity.localeCompare(b.severity));
   const stageAverages=stages.slice(0,-1).map(([code,name])=>{const samples=issues.flatMap(x=>x.completedStageDays&&Number.isFinite(Number(x.completedStageDays[code]))?[Number(x.completedStageDays[code])]:[]);return{code,name,sampleCount:samples.length,averageDays:jiraAverage(samples)};});
-  const severityAverages=[...jiraGroupBy(closed,x=>`${x.severityKey}|${x.severityLabel}`).values()].map(group=>({severity:group[0].severityLabel,severityKey:group[0].severityKey,sampleCount:group.length,averageDays:jiraAverage(group.map(x=>x.closureElapsedDays))})).sort((a,b)=>(b.averageDays??-1)-(a.averageDays??-1)||jiraSeverityOrder(a.severityKey)-jiraSeverityOrder(b.severityKey));
+  const severityAverages=[...jiraGroupBy(closed.filter(x=>x.timingReliable),x=>`${x.severityKey}|${x.severityLabel}`).values()].map(group=>({severity:group[0].severityLabel,severityKey:group[0].severityKey,sampleCount:group.length,averageDays:jiraAverage(group.map(x=>x.closureElapsedDays))})).sort((a,b)=>(b.averageDays??-1)-(a.averageDays??-1)||jiraSeverityOrder(a.severityKey)-jiraSeverityOrder(b.severityKey));
   const unmatchedStatuses=jiraCounts(issues.filter(x=>x.stageCode==='other'),x=>x.status,'status');
   const unmatchedSeverities=jiraCounts(issues.filter(x=>x.severityKey==='UNKNOWN'),x=>x.severityLabel,'severity');
   const generatedAt=entries.map(x=>new Date(x.data.generatedAt)).filter(x=>!Number.isNaN(x.valueOf())).sort((a,b)=>b-a)[0]?.toISOString()||new Date().toISOString();
-  return{generatedAt,cutoffDate,project:[...new Set(entries.map(x=>x.data.project))].join('、'),projects:[...new Set(entries.map(x=>x.data.project))],presetNames:entries.map(x=>x.preset.name),standards:entries.map(x=>({project:x.data.project,...x.data.standard})),queries:entries.map(x=>({project:x.data.project,preset:x.preset.name,jql:x.data.query})),truncated:entries.some(x=>x.data.truncated),sourceTotal:entries.reduce((sum,x)=>sum+(x.data.sourceTotal||0),0),historyTruncated:issues.filter(x=>x.historyTruncated).length,summary:{total:issues.length,active:active.length,closed:closed.length,closureRate:jiraPercentValue(closed.length,issues.length),averageClosureDays:jiraAverage(closed.map(x=>x.closureElapsedDays)),stageOverdue:active.filter(x=>x.stageOverdueDays>0).length,closureOverdue:active.filter(x=>x.closureOverdueDays>0).length},funnel,overdue,closureRates,stageAverages,severityAverages,unmatchedStatuses,unmatchedSeverities,issues};
+  return{generatedAt,effectiveCutoff:entries.map(x=>x.data.effectiveCutoff).sort((a,b)=>Date.parse(a)-Date.parse(b))[0],jiraBaseUrl:entries[0]?.data.jiraBaseUrl,cutoffDate,project:[...new Set(entries.map(x=>x.data.project))].join('、'),projects:[...new Set(entries.map(x=>x.data.project))],presetNames:entries.map(x=>x.preset.name),standards:entries.map(x=>({project:x.data.project,...x.data.standard})),queries:entries.map(x=>({project:x.data.project,preset:x.preset.name,jql:x.data.query})),truncated:entries.some(x=>x.data.truncated),sourceTotal:entries.reduce((sum,x)=>sum+(x.data.sourceTotal||0),0),historyTruncated:issues.filter(x=>x.historyTruncated).length,summary:{...jiraClosureSummary(issues),total:issues.length,active:active.length,closed:closed.length,closureRate:jiraPercentValue(closed.length,issues.length),averageClosureDays:jiraAverage(closed.filter(x=>x.timingReliable).map(x=>x.closureElapsedDays)),stageOverdue:active.filter(x=>x.stageOverdueDays>0).length,closureOverdue:active.filter(x=>x.closureOverdueDays>0).length},funnel,overdue,closureRates,stageAverages,severityAverages,unmatchedStatuses,unmatchedSeverities,issues};
 }
 
 function jiraGroupBy(items,keySelector){const groups=new Map();items.forEach(item=>{const key=keySelector(item);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(item);});return groups;}
@@ -677,13 +683,15 @@ function jiraPdfStyles() {
     .jira-result-head { position: static !important; }
     .jira-result-actions, .jira-result-jql, .jira-segmented, .jira-show-all, .jira-chart-tooltip { display: none !important; }
     .jira-chart-warning button { display: none !important; }
-    .jira-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)) !important; }
+    .jira-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
     .jira-diagnosis-grid { grid-template-columns: minmax(0, 1.15fr) minmax(350px, .85fr) !important; }
     .jira-risk-stack { grid-template-columns: minmax(0, 1fr) !important; }
     .jira-two-column { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
     .jira-variant-body { grid-template-columns: minmax(310px, .8fr) minmax(320px, 1.2fr) !important; }
     .jira-variant-summary { border-right: 1px solid #edf0f4 !important; border-bottom: 0 !important; padding-bottom: 0 !important; }
-    .jira-trend-scroll, .jira-panel, .jira-variant-body { max-width: none !important; overflow: visible !important; }
+    .jira-trend-scroll, .jira-compare-scroll, .jira-panel, .jira-variant-body { max-width: none !important; overflow: visible !important; }
+    .jira-compare-scroll svg { min-width:0 !important; width:100% !important; }
+    .jira-compare-controls button { display:none !important; }
     button, [role=\"button\"] { pointer-events: none !important; }
     * { animation: none !important; transition: none !important; }
   `;
@@ -773,7 +781,7 @@ function renderJiraResults(data) {
   jiraBoardState.pdfReady=false;
   const warnings = [];
   if (data.truncated) warnings.push(`Jira共返回 ${jiraNumber(data.sourceTotal)} 条，当前看板为保护服务器仅分析前 5,000 条，请缩小查询条件。`);
-  if (data.historyTruncated) warnings.push(`有 ${jiraNumber(data.historyTruncated)} 条问题的 Jira 变更历史超过接口单次展开上限，其历史阶段到达及阶段时长可能不完整，建议缩小查询范围后复核。`);
+  if (data.historyTruncated) warnings.push(`有 ${jiraNumber(data.historyTruncated)} 条问题的 Jira 变更历史超过接口单次展开上限，其历史时效无法可靠判定，已从按期关闭率和平均周期有效样本中排除，请核对Jira历史完整性。`);
   if (data.unmatchedStatuses.length) warnings.push(`有 ${data.unmatchedStatuses.reduce((sum, x) => sum + x.count, 0)} 条问题状态未匹配处理阶段：${data.unmatchedStatuses.map(x => `${x.status}(${x.count})`).join('、')}。`);
   if (data.unmatchedSeverities.length) warnings.push(`有 ${data.unmatchedSeverities.reduce((sum, x) => sum + x.count, 0)} 条问题的严重等级无法映射为 S/A/B/C，因此不参与超时判定：${data.unmatchedSeverities.map(x => `${x.severity}(${x.count})`).join('、')}。`);
   const results = byId('jira-board-results');
@@ -784,6 +792,8 @@ function renderJiraResults(data) {
     ${warnings.map(text => `<div class="jira-warning">${esc(text)}</div>`).join('')}
     <section class="jira-metrics">
       ${jiraMetric('统计问题', data.summary.total, '查询范围内全部问题', 'all')}
+      ${jiraMetric('已关闭问题', data.summary.closed, '查看明细与超期复盘', 'closed-list', 'success')}
+      ${jiraMetric('按期关闭率', jiraPercent(data.summary.onTimeRate), `按期 ${data.summary.onTimeClosed}/${data.summary.assessedClosed} · 无法判定 ${data.summary.unassessableClosed}`, 'on-time', 'primary')}
       ${jiraMetric('待关闭问题', data.summary.active, '截止日仍未进入关闭阶段', 'active', 'primary')}
       ${jiraMetric('整体关闭率', jiraPercent(data.summary.closureRate), `${jiraNumber(data.summary.closed)} 项已关闭`, 'closed', 'success')}
       ${jiraMetric('平均关闭周期', jiraDays(data.summary.averageClosureDays), '仅统计已关闭问题', 'closed-duration', 'violet')}
@@ -800,6 +810,7 @@ function renderJiraResults(data) {
     <section class="jira-panel jira-trend-panel"><div class="jira-panel-head"><div><h3>问题新增与关闭趋势</h3><p>对比问题流入和关闭节奏，点击数据点查看对应问题。</p></div><div class="jira-segmented">${[['30','30天'],['90','90天'],['180','180天'],['all','全部']].map(item=>`<button type="button" data-jira-trend-range="${item[0]}" class="${jiraBoardState.trendRange===item[0]?'active':''}">${item[1]}</button>`).join('')}</div></div><div id="jira-trend-chart"></div></section>
     <section class="jira-panel jira-variant-panel"><div class="jira-panel-head"><div><h3>未关闭问题 ECU Variant 分布</h3><p>查看ADS、LiDAR占比及对应处理人堆积。</p></div><div class="jira-segmented"><button type="button" data-jira-variant-mode="ADS" class="active">ADS</button><button type="button" data-jira-variant-mode="LIDAR">LiDAR</button></div></div><div class="jira-variant-body"><div class="jira-variant-summary">${jiraVariantPie(data)}</div><div><div class="jira-subhead"><strong>当前处理人问题堆积</strong><span>默认展示前10名</span></div><div id="jira-variant-assignee-chart"></div></div></div></section>
     <div class="jira-section-label"><strong>效率复盘</strong><span>关闭结果与处理周期</span></div>
+    <section class="jira-panel" id="jira-closure-comparison"></section>
     <div class="jira-two-column">
       <section class="jira-panel">
         <div class="jira-panel-head"><div><h3>问题关闭率</h3><p>整体关闭率及各严重等级关闭情况。</p></div></div>
@@ -816,6 +827,7 @@ function renderJiraResults(data) {
     </section>`;
 
   renderJiraTrend(data);
+  renderJiraClosureComparisons(data);
   renderJiraVariantAssignees(data);
   loadJiraFollowUpAnalysis(data);
 
@@ -853,6 +865,7 @@ function renderJiraResults(data) {
   results.querySelectorAll('[data-jira-kind]').forEach(button => button.onclick = () => {
     const kind = button.dataset.jiraKind;
     if (kind === 'all') openJiraDetails('全部问题', data.issues, 'stage');
+    if (kind === 'closed-list' || kind === 'on-time') openJiraClosedDetails(data);
     if (kind === 'active') openJiraDetails('待关闭问题', data.issues.filter(x => x.stageCode !== 'closed'), 'stage');
     if (kind === 'closed' || kind === 'closed-duration') openJiraDetails('已关闭问题', data.issues.filter(x => x.stageCode === 'closed'), 'closure');
     if (kind === 'stage-overdue') openJiraDetails('阶段超时问题', data.issues.filter(x => x.stageCode !== 'closed' && x.stageOverdueDays > 0).sort((a,b) => b.stageOverdueDays-a.stageOverdueDays), 'stage');
@@ -935,6 +948,7 @@ function jiraCompactIssueRow(issue) {
 
 function jiraIssueRow(issue, overdueMode) {
   const overdue = overdueMode === 'closure' ? issue.closureOverdueDays : issue.stageOverdueDays;
+  const unknown = overdueMode === 'closure' && issue.stageCode === 'closed' && typeof issue.isOnTime !== 'boolean';
   const limit = overdueMode === 'closure' ? issue.closureLimitDays : issue.stageLimitDays;
   const comment = jiraBoardState.commentCache.get(jiraCommentKey(issue));
   return `<tr class="${overdue > 0 ? 'is-overdue' : ''}">
@@ -942,7 +956,7 @@ function jiraIssueRow(issue, overdueMode) {
     <td><a href="${esc(issue.url)}" target="_blank" rel="noopener noreferrer">${esc(issue.key)}</a><strong>${esc(issue.summary)}</strong><small>创建：${esc(fmtDateOnly(issue.createdAt))}</small></td>
     <td>${esc(issue.assignee)}</td><td><span class="jira-status-dot" style="--stage:${jiraStageColors[issue.stageCode] || jiraStageColors.other}"></span>${esc(issue.status)}</td>
     <td class="jira-comment" data-comment-key="${esc(jiraCommentKey(issue))}">${jiraCommentHtml(comment)}</td>
-    <td>${overdue > 0 ? `<span class="jira-overdue-tag">超时 ${overdue} 天</span>` : `<span class="jira-ok-tag">${limit ? `时限 ${limit} 天` : '未配置时限'}</span>`}</td></tr>`;
+    <td>${unknown ? '<span class="jira-unknown-tag">无法判定</span>' : overdue > 0 ? `<span class="jira-overdue-tag">超时 ${overdue} 天</span>` : `<span class="jira-ok-tag">${limit ? `时限 ${limit} 天` : '未配置时限'}</span>`}</td></tr>`;
 }
 
 function jiraCommentHtml(comment) {
