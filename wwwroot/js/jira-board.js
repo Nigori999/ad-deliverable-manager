@@ -790,12 +790,12 @@ function renderJiraResults(data) {
     <section class="jira-result-head jira-result-context"><div><h3>${esc(data.project)} · 截至 ${esc(data.cutoffDate)}</h3><p>${data.presetNames.length} 个查询方案 · ${data.projects.length} 个项目 · 数据生成于 ${esc(fmtDate(data.generatedAt))}</p><details class="jira-result-jql"><summary>查看查询口径</summary><pre>${esc(queryText)}</pre></details></div><div class="jira-result-actions"><button type="button" class="btn btn-light btn-sm" id="jira-edit-query">修改查询范围</button><button type="button" class="btn btn-light btn-sm" id="jira-copy-jql">复制JQL</button><button type="button" class="btn btn-light btn-sm" id="jira-export-pdf" disabled>准备PDF数据…</button><button type="button" class="btn btn-primary btn-sm" id="jira-rerun">重新分析</button></div></section>
     ${warnings.map(text => `<div class="jira-warning">${esc(text)}</div>`).join('')}
     <section class="jira-metrics">
-      ${jiraMetric('统计问题', data.summary.total, '查询范围内全部问题', 'all')}
+      ${jiraMetric('问题总量', data.summary.total, '查询范围内全部问题', 'all')}
       ${jiraMetric('已关闭问题', data.summary.closed, '查看明细与超期复盘', 'closed-list', 'success')}
-      ${jiraMetric('按期关闭率（总周期）', jiraPercent(data.summary.onTimeRate), `阶段超期${data.summary.stageOverdueClosed}/${data.summary.closed} · 无法判定${data.summary.unassessableStageClosed}`, 'on-time', 'primary')}
       ${jiraMetric('待关闭问题', data.summary.active, '截止日仍未进入关闭阶段', 'active', 'primary')}
       ${jiraMetric('整体关闭率', jiraPercent(data.summary.closureRate), `${jiraNumber(data.summary.closed)} 项已关闭`, 'closed', 'success')}
       ${jiraMetric('平均关闭周期', jiraDays(data.summary.averageClosureDays), '仅统计已关闭问题', 'closed-duration', 'violet')}
+      ${jiraMetric('按期关闭率（总周期）', jiraPercent(data.summary.onTimeRate), `阶段超期${data.summary.stageOverdueClosed}/${data.summary.closed} · 无法判定${data.summary.unassessableStageClosed}`, 'on-time', 'primary')}
       ${jiraMetric('阶段超时', data.summary.stageOverdue, '当前阶段超过时效', 'stage-overdue', 'danger')}
       ${jiraMetric('关闭周期超时', data.summary.closureOverdue, '当前未关闭且超过总周期', 'closure-overdue', 'orange')}
     </section>
