@@ -43,13 +43,13 @@ function jiraReviewSelect(label,key,values) {
 
 async function openJiraClosedDetails(data) {
   const items=data.issues.filter(x=>x.stageCode==='closed');
-  let page=1,filtered=items,records=[],reviewError='',loaded=!hasPermission('JIRA_REVIEW_VIEW');
+  let page=1,filtered=items,records=[],reviewError='',recordRequest,loaded=!hasPermission('JIRA_REVIEW_VIEW');
   const trigger=document.activeElement;
   const filters={};
-  modalRoot.innerHTML=`<div class="modal-backdrop jira-detail-backdrop"><div class="jira-detail-modal" role="dialog" aria-modal="true" aria-label="已关闭问题"><div class="jira-detail-head"><div><h3>已关闭问题 · ${items.length}项</h3><p>按所属项目及当前严重等级匹配关闭总周期；展开超期阶段可查看各阶段耗时与标准；超期天数向上取整。</p></div><div class="jira-detail-actions"><button type="button" class="btn btn-light btn-sm" data-closed-export>导出筛选结果</button><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div></div><div class="jira-detail-filters jira-closed-filters"><label><span>编号 / 标题</span><input data-review-filter="keyword" placeholder="搜索问题"></label>${jiraReviewSelect('项目','project',items.map(x=>x.projectKey))}${jiraReviewSelect('严重等级','severity',items.map(x=>x.severityLabel))}${jiraReviewSelect('关闭时效','timing',['按期','超期','无法判定'])}${jiraReviewSelect('超期阶段','stage',items.flatMap(x=>jiraOverdueStages(x).map(s=>s.name)))}${jiraReviewSelect('复盘状态','review',['已复盘','未复盘'])}<label><span>关闭日期起</span><input type="date" data-review-filter="from"></label><label><span>关闭日期止</span><input type="date" data-review-filter="to"></label></div><div data-closed-review-status></div><div data-closed-body></div></div></div>`;
+  modalRoot.innerHTML=`<div class="modal-backdrop jira-detail-backdrop"><div class="jira-detail-modal" role="dialog" aria-modal="true" aria-label="已关闭问题"><div class="jira-detail-head"><div><h3>已关闭问题 · ${items.length}项</h3><p>按所属项目及当前严重等级匹配关闭总周期；展开超期阶段可查看各阶段耗时与标准；超期天数向上取整。</p></div><div class="jira-detail-actions"><button type="button" class="btn btn-light btn-sm" data-closed-export>导出筛选结果</button><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div></div><div class="jira-detail-filters jira-closed-filters"><label><span>编号 / 标题</span><input data-review-filter="keyword" placeholder="搜索问题"></label>${jiraReviewSelect('项目','project',items.map(x=>x.projectKey))}${jiraReviewSelect('严重等级','severity',items.map(x=>x.severityLabel))}${jiraReviewSelect('关闭时效','timing',['按期','超期','无法判定'])}${jiraReviewSelect('超期阶段','stage',items.flatMap(x=>jiraOverdueStages(x).map(s=>s.name)))}${jiraReviewSelect('复盘状态','review',['已复盘','未复盘'])}<label><span>关闭日期起</span><input type="date" data-review-filter="from"></label><label><span>关闭日期止</span><input type="date" data-review-filter="to"></label></div><div data-closed-review-status></div><div class="jira-detail-body" data-closed-body></div></div></div>`;
   const host=modalRoot.querySelector('.jira-detail-modal');
   const onKey=e=>{if(byId('drawer-root').childElementCount)return;if(e.key==='Escape')close();if(e.key==='Tab')jiraTrapFocus(e,host);};
-  const close=()=>{document.removeEventListener('keydown',onKey);modalRoot.replaceChildren();trigger?.focus?.();};
+  const close=()=>{recordRequest?.abort();document.removeEventListener('keydown',onKey);modalRoot.replaceChildren();trigger?.focus?.();};
   document.addEventListener('keydown',onKey);
   host.querySelector('.jira-detail-close').onclick=close;
   modalRoot.firstElementChild.onclick=e=>{if(e.target===modalRoot.firstElementChild)close();};
@@ -64,19 +64,22 @@ async function openJiraClosedDetails(data) {
     host.querySelector('[data-review-filter="review"]').disabled=!hasPermission('JIRA_REVIEW_VIEW')||!loaded||!!reviewError;
     host.querySelector('[data-closed-export]').disabled=!filtered.length;
     const visible=filtered.slice((page-1)*50,page*50);
-    host.querySelector('[data-closed-body]').innerHTML=filtered.length?`<div class="jira-detail-table-wrap"><table class="jira-closed-table"><thead><tr><th>操作</th><th>Jira编号 / 项目</th><th>标题</th><th>严重等级</th><th>是否关闭超期</th><th>超期阶段</th><th>超期天数</th><th>关闭日期</th><th>复盘状态</th></tr></thead><tbody>${visible.map((x,index)=>{const record=reviewFor(x),eligible=x.timingReliable&&(x.isOnTime===false||jiraOverdueStages(x).length>0),canCreate=hasPermission('JIRA_REVIEW_CREATE')&&eligible&&loaded&&!reviewError;return `<tr><td><button type="button" class="btn btn-light btn-sm" data-closed-review="${index}" ${record||canCreate?'':'disabled'} title="${esc(record?'查看已保存复盘':!hasPermission('JIRA_REVIEW_CREATE')?'没有新增复盘权限':!x.timingReliable?'历史数据不完整，无法复盘':!eligible?'该问题未发现超期':'填写超期复盘')}">${record?'查看 / 编辑':'复盘'}</button></td>${jiraClosureCells(x)}<td>${record?'已复盘':hasPermission('JIRA_REVIEW_VIEW')&&loaded&&!reviewError?'未复盘':'—'}</td></tr>`;}).join('')}</tbody></table></div><div class="jira-detail-pagination"><span>筛选后 ${filtered.length} 项 · 第 ${page}/${pages} 页</span><div><button class="btn btn-light btn-sm" type="button" data-closed-prev ${page===1?'disabled':''}>上一页</button><button class="btn btn-light btn-sm" type="button" data-closed-next ${page===pages?'disabled':''}>下一页</button></div></div>`:jiraNoData('当前筛选条件下暂无已关闭问题');
+    host.querySelector('[data-closed-body]').innerHTML=filtered.length?`<div class="jira-detail-table-wrap"><table class="jira-closed-table"><thead><tr><th>操作</th><th>Jira编号 / 项目</th><th>标题</th><th>严重等级</th><th>是否关闭超期</th><th>超期阶段</th><th>超期天数</th><th>关闭日期</th><th>复盘状态</th></tr></thead><tbody>${visible.map((x,index)=>{const record=reviewFor(x),eligible=x.timingReliable&&(x.isOnTime===false||jiraOverdueStages(x).length>0),canCreate=hasPermission('JIRA_REVIEW_CREATE')&&eligible&&loaded&&!reviewError;return `<tr><td><button type="button" class="btn btn-light btn-sm" data-closed-review="${index}" ${record||canCreate?'':'disabled'} title="${esc(record?'查看已保存复盘':!hasPermission('JIRA_REVIEW_CREATE')?'没有新增复盘权限':!x.timingReliable?'历史数据不完整，无法复盘':!eligible?'该问题未发现超期':!loaded?'正在读取复盘状态':reviewError?'请先重试读取复盘状态':'填写超期复盘')}">${record?'查看 / 编辑':'复盘'}</button>${record||canCreate?'':`<small class="jira-cell-note">${!hasPermission('JIRA_REVIEW_CREATE')?'无新增权限':!x.timingReliable?'历史不完整':!eligible?'未发现超期':!loaded?'读取状态中…':'状态加载失败，请重试'}</small>`}</td>${jiraClosureCells(x)}<td>${record?'已复盘':hasPermission('JIRA_REVIEW_VIEW')&&loaded&&!reviewError?'未复盘':'—'}</td></tr>`;}).join('')}</tbody></table></div><div class="jira-detail-pagination"><span>筛选后 ${filtered.length} 项 · 第 ${page}/${pages} 页</span><div><button class="btn btn-light btn-sm" type="button" data-closed-prev ${page===1?'disabled':''}>上一页</button><button class="btn btn-light btn-sm" type="button" data-closed-next ${page===pages?'disabled':''}>下一页</button></div></div>`:jiraNoData('当前筛选条件下暂无已关闭问题');
     host.querySelector('[data-closed-prev]')?.addEventListener('click',()=>{page--;render();});
     host.querySelector('[data-closed-next]')?.addEventListener('click',()=>{page++;render();});
     host.querySelectorAll('[data-closed-review]').forEach(button=>button.onclick=async()=>{
-      const issue=visible[Number(button.dataset.closedReview)];button.disabled=true;
-      try{await openJiraReviewEditor(issue,reviewFor(issue),async()=>{await loadRecords();});}catch(error){toast(error.message,'error');}finally{if(button.isConnected)render();}
+      const issue=visible[Number(button.dataset.closedReview)];
+      try{await openJiraReviewEditor(issue,reviewFor(issue),async()=>{await loadRecords();});}catch(error){toast(error.message,'error');}
     });
     host.querySelector('[data-reviews-retry]')?.addEventListener('click',loadRecords);
   };
   const loadRecords=async()=>{
     if(!hasPermission('JIRA_REVIEW_VIEW')){render();return;}
-    loaded=false;render();
-    try{records=(await api('/internal/jira-reviews')).items;reviewError='';}catch(error){reviewError=error.message;filters.review='';host.querySelector('[data-review-filter="review"]').value='';}
+    loaded=false;render();recordRequest=new AbortController();
+    const controller=recordRequest,timeout=setTimeout(()=>controller.abort(),15000);
+    try{records=(await api('/internal/jira-reviews',{signal:controller.signal})).items;reviewError='';}
+    catch(error){reviewError=error.name==='AbortError'?'复盘状态读取超时，请重试。':error.message;filters.review='';host.querySelector('[data-review-filter="review"]').value='';}
+    finally{clearTimeout(timeout);}
     loaded=true;render();
   };
   host.querySelectorAll('[data-review-filter]').forEach(input=>input.addEventListener(input.tagName==='INPUT'&&input.type!=='date'?'input':'change',()=>{filters[input.dataset.reviewFilter]=input.value;page=1;render();}));
@@ -93,30 +96,56 @@ function jiraTrapFocus(event,host) {
 
 async function openJiraReviewEditor(issue,record,onSaved) {
   const editable=record?hasPermission('JIRA_REVIEW_EDIT'):hasPermission('JIRA_REVIEW_CREATE');
-  const options=editable?(await api('/internal/jira-reviews/reference-data')).categories:[];
   const root=byId('drawer-root'),trigger=document.activeElement;
   const source=record?jiraReviewIssue(record):issue;
-  let saving=false;
-  root.innerHTML=`<div class="jira-review-overlay"><aside class="jira-review-drawer" role="dialog" aria-modal="true" aria-label="超期复盘"><div class="jira-detail-head"><div><h3>${record?'问题复盘':'填写超期复盘'}</h3><p>${esc(source.key)} · ${esc(source.severityLabel)} · ${jiraClosureStatus(source)}</p></div><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div><div class="jira-review-body"><div class="jira-review-context"><strong>${esc(source.summary)}</strong><p>关闭周期 ${Number(source.closureElapsedDays).toFixed(1)}天 / 标准 ${source.closureLimitDays??'未配置'}${source.closureLimitDays===null?'':'天'}</p>${jiraStageTimingHtml(source)}${record?`<p>复盘依据：截至 ${esc(record.snapshot.cutoffDate)} · 标准版本 ${record.snapshot.standardRevision}</p>`:''}</div><form id="jira-review-form"><div class="field"><label>处理超时原因 *</label><textarea name="reason" required maxlength="4000" rows="6" ${editable?'':'readonly'} placeholder="说明发生超时的具体原因">${esc(record?.reason||'')}</textarea></div><div class="field"><label>责任人 *</label><input name="responsiblePerson" required maxlength="150" value="${esc(record?.responsiblePerson||'')}" ${editable?'':'readonly'} placeholder="填写责任人，可包含供应商人员"></div><div class="field"><label>超时原因分类 *</label>${editable?`<select name="categoryItemId" required><option value="">请选择</option>${options.map(x=>`<option value="${x.id}" ${x.id===record?.categoryItemId?'selected':''}>${esc(x.name)}</option>`).join('')}</select>${!options.length?'<p class="form-hint">暂无可用分类，请联系字典管理员维护“Jira超时原因分类”。</p>':''}`:`<input readonly value="${esc(record?.categoryName)}">`}</div></form>${record?`<p class="form-hint">复盘人：${esc(record.createdBy)} · ${esc(fmtDate(record.createdAt))}<br>最后修改：${esc(record.updatedBy)} · ${esc(fmtDate(record.updatedAt))}</p>`:''}</div><div class="jira-review-footer"><button type="button" class="btn btn-light" data-review-cancel>关闭</button>${editable?'<button type="button" class="btn btn-primary" data-review-save>保存复盘</button>':''}</div></aside></div>`;
+  if(root.childElementCount)return;
+  let saving=false,optionsReady=!editable,requestController;
+  const previousOverflow=document.body.style.overflow;
+  document.body.style.overflow='hidden';
+  root.innerHTML=`<div class="jira-review-overlay"><aside class="jira-review-drawer" role="dialog" aria-modal="true" aria-label="超期复盘"><div class="jira-detail-head"><div><h3>${record?'问题复盘':'填写超期复盘'}</h3><p>${esc(source.key)} · ${esc(source.severityLabel)} · ${jiraClosureStatus(source)}</p></div><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div><div class="jira-review-body"><div class="jira-review-context"><strong>${esc(source.summary)}</strong><p>关闭周期 ${Number(source.closureElapsedDays).toFixed(1)}天 / 标准 ${source.closureLimitDays??'未配置'}${source.closureLimitDays===null?'':'天'}</p>${jiraStageTimingHtml(source)}${record?`<p>复盘依据：截至 ${esc(record.snapshot.cutoffDate)} · 标准版本 ${record.snapshot.standardRevision}</p>`:''}</div><form id="jira-review-form"><div class="field"><label>处理超时原因 *</label><textarea name="reason" required maxlength="4000" rows="6" ${editable?'':'readonly'} placeholder="说明发生超时的具体原因">${esc(record?.reason||'')}</textarea></div><div class="field"><label>责任人 *</label><input name="responsiblePerson" required maxlength="150" value="${esc(record?.responsiblePerson||'')}" ${editable?'':'readonly'} placeholder="填写责任人，可包含供应商人员"></div><div class="field"><label>超时原因分类 *</label>${editable?'<select name="categoryItemId" required disabled><option value="">正在加载分类…</option></select><div data-category-status role="status"></div>':`<input readonly value="${esc(record?.categoryName)}">`}</div></form><div data-review-error class="jira-warning" role="alert" hidden></div>${record?`<p class="form-hint">复盘人：${esc(record.createdBy)} · ${esc(fmtDate(record.createdAt))}<br>最后修改：${esc(record.updatedBy)} · ${esc(fmtDate(record.updatedAt))}</p>`:''}</div><div class="jira-review-footer"><button type="button" class="btn btn-light" data-review-cancel>关闭</button>${editable?'<button type="button" class="btn btn-primary" data-review-save disabled>保存复盘</button>':''}</div></aside></div>`;
   const host=root.querySelector('aside');
-  const close=()=>{if(saving)return;document.removeEventListener('keydown',onKey,true);root.replaceChildren();trigger?.focus?.();};
+  const close=()=>{if(saving)return;requestController?.abort();document.removeEventListener('keydown',onKey,true);document.body.style.overflow=previousOverflow;root.replaceChildren();if(trigger?.isConnected)trigger.focus();};
   const onKey=e=>{if(e.key==='Escape'){e.stopImmediatePropagation();close();}if(e.key==='Tab'){e.stopImmediatePropagation();jiraTrapFocus(e,host);}};
   document.addEventListener('keydown',onKey,true);
   host.querySelector('.jira-detail-close').onclick=close;
   host.querySelector('[data-review-cancel]').onclick=close;
   root.firstElementChild.onclick=e=>{if(e.target===root.firstElementChild)close();};
   host.querySelector('[data-review-save]')?.addEventListener('click',async event=>{
-    const form=byId('jira-review-form');if(!form.reportValidity())return;
+    if(saving||!optionsReady)return;
+    const form=host.querySelector('form'),errorHost=host.querySelector('[data-review-error]');errorHost.hidden=true;if(!form.reportValidity())return;
     const reason=form.elements.reason.value.trim(),person=form.elements.responsiblePerson.value.trim();
-    if(!reason||!person){toast('请填写具体超时原因和责任人。','error');return;}
+    if(!reason||!person){errorHost.textContent='请填写具体超时原因和责任人。';errorHost.hidden=false;errorHost.scrollIntoView({block:'nearest'});return;}
     const button=event.currentTarget;saving=true;button.disabled=true;button.textContent='保存中…';
     try{
       const payload={...(record?{}:issue.reviewContext),reason,responsiblePerson:person,categoryItemId:Number(form.elements.categoryItemId.value),revision:record?.revision||0};
       await api(record?`/internal/jira-reviews/${record.id}`:'/internal/jira-reviews',{method:record?'PUT':'POST',body:JSON.stringify(payload)});
-      saving=false;close();toast('复盘已保存。');await onSaved?.();
-    }catch(error){saving=false;toast(error.message,'error');if(button.isConnected){button.disabled=false;button.textContent='保存复盘';}}
+      saving=false;close();toast('复盘已保存。');
+      try{await onSaved?.();}catch(error){toast(`复盘已保存，但列表刷新失败：${error.message}`,'error');}
+    }catch(error){saving=false;if(button.isConnected){errorHost.textContent=error.message;errorHost.hidden=false;errorHost.scrollIntoView({block:'nearest'});button.disabled=false;button.textContent='保存复盘';}}
   });
+  host.querySelector('form').onsubmit=event=>{event.preventDefault();host.querySelector('[data-review-save]')?.click();};
   host.querySelector('textarea').focus();
+  const loadOptions=async()=>{
+    requestController=new AbortController();
+    const controller=requestController;
+    const timeout=setTimeout(()=>controller.abort(),15000);
+    const select=host.querySelector('[name="categoryItemId"]'),status=host.querySelector('[data-category-status]');
+    status.innerHTML='<p class="form-hint">正在读取原因分类，可先填写原因和责任人。</p>';
+    try{
+      const {categories}=await api('/internal/jira-reviews/reference-data',{signal:requestController.signal});
+      if(!host.isConnected)return;
+      select.innerHTML='<option value="">请选择</option>'+categories.map(x=>`<option value="${x.id}" ${x.id===record?.categoryItemId?'selected':''}>${esc(x.name)}</option>`).join('');
+      optionsReady=categories.length>0;select.disabled=!optionsReady;
+      host.querySelector('[data-review-save]').disabled=!optionsReady;
+      status.innerHTML=optionsReady?'':'<p class="form-hint">暂无可用分类，请联系字典管理员维护“Jira超时原因分类”。</p><button type="button" class="btn btn-light btn-sm" data-category-retry>重新加载</button>';
+    }catch(error){
+      if(!host.isConnected)return;
+      select.innerHTML='<option value="">分类读取失败</option>';
+      status.innerHTML=`<div class="jira-warning" role="alert">${esc(error.name==='AbortError'?'分类读取超时，请重试。':error.message)} <button type="button" class="btn btn-light btn-sm" data-category-retry>重试</button></div>`;
+    }finally{clearTimeout(timeout);}
+    status.querySelector('[data-category-retry]')?.addEventListener('click',loadOptions);
+  };
+  if(editable)await loadOptions();
 }
 
 async function renderJiraReviews() {
@@ -160,5 +189,5 @@ async function renderJiraReviews() {
 
 function jiraReviewBars(title,items,filter) {
   const max=Math.max(1,...items.map(x=>x.count));
-  return `<section class="jira-panel"><h3>${esc(title)}</h3><div class="jira-review-bars">${items.length?items.map(x=>`<button type="button" data-review-bar="${esc(x.name)}" data-filter="${filter}"><span>${esc(x.name)}</span><i><b style="width:${x.count/max*100}%"></b></i><strong>${x.count}</strong></button>`).join(''):jiraNoData('暂无样本')}</div></section>`;
+  return `<section class="jira-panel jira-review-chart"><h3>${esc(title)}</h3><div class="jira-review-bars">${items.length?items.map(x=>`<button type="button" data-review-bar="${esc(x.name)}" data-filter="${filter}"><span>${esc(x.name)}</span><i><b style="width:${x.count/max*100}%"></b></i><strong>${x.count}</strong></button>`).join(''):jiraNoData('暂无样本')}</div></section>`;
 }

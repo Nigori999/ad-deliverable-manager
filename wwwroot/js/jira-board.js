@@ -640,7 +640,6 @@ async function loadJiraFollowUpAnalysis(data) {
   const host=byId('jira-followup-host');if(!host)return;
   setJiraPdfReady(false);
   const active=data.issues.filter(issue=>issue.stageCode!=='closed');
-  if(!active.length){host.innerHTML=jiraFollowUpChart([],0);setJiraPdfReady(true);return;}
   host.innerHTML='<div class="jira-chart-loading"><div class="jira-spinner"></div><strong>正在核对当日评论</strong><span>0 / '+jiraNumber(active.length)+'</span></div>';
   await loadJiraComments(active,(completed,total)=>{
     if(jiraBoardState.analysis!==data)return;
@@ -910,7 +909,7 @@ function openJiraDetails(title, items, overdueMode, { compact = false } = {}) {
   const severityOptions=[...new Set(items.map(x=>x.severityLabel))].sort((a,b)=>jiraSeverityOrder(items.find(x=>x.severityLabel===a)?.severityKey)-jiraSeverityOrder(items.find(x=>x.severityLabel===b)?.severityKey));
   const statusOptions=[...new Set(items.map(x=>x.status))].sort();
   const assigneeOptions=[...new Set(items.map(x=>x.assignee))].sort();
-  modalRoot.innerHTML = `<div class="modal-backdrop jira-detail-backdrop"><div class="jira-detail-modal" role="dialog" aria-modal="true" aria-labelledby="jira-detail-title"><div class="jira-detail-head"><div><h3 id="jira-detail-title">${esc(title)}</h3><p>当前穿透范围共 ${jiraNumber(items.length)} 项，支持搜索、快速筛选和导出当前结果。</p></div><div class="jira-detail-actions"><button type="button" class="btn btn-light btn-sm jira-export-button" data-jira-export ${items.length?'':'disabled'}><span>↓</span>导出当前结果</button><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div></div><div class="jira-detail-filters"><label class="jira-detail-search"><span>搜索</span><input id="jira-detail-search" placeholder="输入Jira编号或标题"></label><label><span>严重等级</span><select id="jira-detail-severity"><option value="">全部</option>${severityOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label><label><span>当前状态</span><select id="jira-detail-status"><option value="">全部</option>${statusOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label><label><span>当前处理人</span><select id="jira-detail-assignee"><option value="">全部</option>${assigneeOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label></div><div id="jira-detail-body"></div></div></div>`;
+  modalRoot.innerHTML = `<div class="modal-backdrop jira-detail-backdrop"><div class="jira-detail-modal" role="dialog" aria-modal="true" aria-labelledby="jira-detail-title"><div class="jira-detail-head"><div><h3 id="jira-detail-title">${esc(title)}</h3><p>当前穿透范围共 ${jiraNumber(items.length)} 项，支持搜索、快速筛选和导出当前结果。</p></div><div class="jira-detail-actions"><button type="button" class="btn btn-light btn-sm jira-export-button" data-jira-export ${items.length?'':'disabled'}><span>↓</span>导出当前结果</button><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div></div><div class="jira-detail-filters"><label class="jira-detail-search"><span>搜索</span><input id="jira-detail-search" placeholder="输入Jira编号或标题"></label><label><span>严重等级</span><select id="jira-detail-severity"><option value="">全部</option>${severityOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label><label><span>当前状态</span><select id="jira-detail-status"><option value="">全部</option>${statusOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label><label><span>当前处理人</span><select id="jira-detail-assignee"><option value="">全部</option>${assigneeOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label></div><div class="jira-detail-body" id="jira-detail-body"></div></div></div>`;
   const onKeydown=event=>{if(event.key==='Escape')close();if(event.key==='Tab'){const focusable=[...modalRoot.querySelectorAll('button:not([disabled]),input,select,a[href]')];if(!focusable.length)return;const first=focusable[0],last=focusable.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}};
   const close = () => {document.removeEventListener('keydown',onKeydown);modalRoot.replaceChildren();trigger?.focus?.();};
   document.addEventListener('keydown',onKeydown);
@@ -943,7 +942,7 @@ function openJiraDetails(title, items, overdueMode, { compact = false } = {}) {
 }
 
 function jiraCompactIssueRow(issue) {
-  return `<tr><td><strong>${esc(issue.projectKey)}</strong></td><td>${esc(issue.sourceSchemes.join('、'))}</td><td><a href="${esc(issue.url)}" target="_blank" rel="noopener noreferrer">${esc(issue.key)}</a></td><td><strong>${esc(issue.summary)}</strong></td><td><span class="jira-severity ${esc(issue.severityKey.toLowerCase())}">${esc(issue.severityLabel)}</span></td><td>${esc(issue.assignee)}</td><td><span class="jira-status-dot" style="--stage:${jiraStageColors[issue.stageCode]||jiraStageColors.other}"></span>${esc(issue.status)}</td><td>${esc(issue.stageName)}</td></tr>`;
+  return `<tr><td><strong>${esc(issue.projectKey)}</strong></td><td>${esc(issue.sourceSchemes.join('、'))}</td><td><a href="${esc(issue.url)}" target="_blank" rel="noopener noreferrer">${esc(issue.key)}</a></td><td class="jira-detail-title-cell"><strong>${esc(issue.summary)}</strong></td><td><span class="jira-severity ${esc(issue.severityKey.toLowerCase())}">${esc(issue.severityLabel)}</span></td><td>${esc(issue.assignee)}</td><td><span class="jira-status-dot" style="--stage:${jiraStageColors[issue.stageCode]||jiraStageColors.other}"></span>${esc(issue.status)}</td><td>${esc(issue.stageName)}</td></tr>`;
 }
 
 function jiraIssueRow(issue, overdueMode) {
@@ -953,7 +952,7 @@ function jiraIssueRow(issue, overdueMode) {
   const comment = jiraBoardState.commentCache.get(jiraCommentKey(issue));
   return `<tr class="${overdue > 0 ? 'is-overdue' : ''}">
     <td><strong>${esc(issue.projectKey)}</strong><small>${esc(issue.sourceSchemes.join('、'))}</small></td><td><span class="jira-severity ${esc(issue.severityKey.toLowerCase())}">${esc(issue.severityLabel)}</span></td>
-    <td><a href="${esc(issue.url)}" target="_blank" rel="noopener noreferrer">${esc(issue.key)}</a><strong>${esc(issue.summary)}</strong><small>创建：${esc(fmtDateOnly(issue.createdAt))}</small></td>
+    <td class="jira-detail-title-cell"><a href="${esc(issue.url)}" target="_blank" rel="noopener noreferrer">${esc(issue.key)}</a><strong>${esc(issue.summary)}</strong><small>创建：${esc(fmtDateOnly(issue.createdAt))}</small></td>
     <td>${esc(issue.assignee)}</td><td><span class="jira-status-dot" style="--stage:${jiraStageColors[issue.stageCode] || jiraStageColors.other}"></span>${esc(issue.status)}</td>
     <td class="jira-comment" data-comment-key="${esc(jiraCommentKey(issue))}">${jiraCommentHtml(comment)}</td>
     <td>${unknown ? '<span class="jira-unknown-tag">无法判定</span>' : overdue > 0 ? `<span class="jira-overdue-tag">超时 ${overdue} 天</span>` : `<span class="jira-ok-tag">${limit ? `时限 ${limit} 天` : '未配置时限'}</span>`}</td></tr>`;
