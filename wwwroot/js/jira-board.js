@@ -864,7 +864,8 @@ function renderJiraResults(data) {
   results.querySelectorAll('[data-jira-kind]').forEach(button => button.onclick = () => {
     const kind = button.dataset.jiraKind;
     if (kind === 'all') openJiraDetails('全部问题', data.issues, 'stage');
-    if (kind === 'closed-list' || kind === 'on-time') openJiraClosedDetails(data);
+    if (kind === 'closed-list') openJiraClosedDetails(data);
+    if (kind === 'on-time') openJiraClosedDetails(data,{onTimeOnly:true});
     if (kind === 'active') openJiraDetails('待关闭问题', data.issues.filter(x => x.stageCode !== 'closed'), 'stage');
     if (kind === 'closed' || kind === 'closed-duration') openJiraDetails('已关闭问题', data.issues.filter(x => x.stageCode === 'closed'), 'closure');
     if (kind === 'stage-overdue') openJiraDetails('阶段超时问题', data.issues.filter(x => x.stageCode !== 'closed' && x.stageOverdueDays > 0).sort((a,b) => b.stageOverdueDays-a.stageOverdueDays), 'stage');

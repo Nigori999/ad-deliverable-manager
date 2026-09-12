@@ -79,3 +79,20 @@ test('阶段无法判定独立计数，已确认阶段超期的问题不重复�
   const s=run('jiraClosureSummary(items)');
   assert.equal(s.stageOverdueClosed,1);assert.equal(s.unassessableStageClosed,3);assert.equal(s.onTimeRate,100);
 });
+
+
+vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../wwwroot/js/jira-reviews.js'),'utf8'),context);
+test('明细累计各阶段超期天数，不使用关闭总周期超期天数',()=>{
+  context.sample={projectKey:'AD',key:'AD-1',summary:'样本',severityLabel:'S',isOnTime:true,closureOverdueDays:0,
+    stageTimings:[{name:'分析',overdueDays:4},{name:'修复',overdueDays:3},{name:'验证',overdueDays:0}]};
+  assert.equal(run('jiraStageOverdueTotal(sample)'),7);
+  const row=run('jiraClosureExportRow(sample)'),headers=run('jiraClosureHeaders');
+  assert.equal(row.length,headers.length);assert.equal(row[headers.indexOf('超期天数（各阶段累计）')],7);
+  assert.equal(headers.includes('是否关闭超期'),false);assert.equal(headers.includes('关闭超期天数'),false);
+});
+
+test('阶段累计区分零超期和无法计算完整总数',()=>{
+  assert.equal(run('jiraStageOverdueTotal({stageTimings:[{overdueDays:0}]})'),0);
+  assert.equal(run('jiraStageOverdueTotal({stageTimings:[]})'),null);
+  assert.equal(run('jiraStageOverdueTotal({stageTimings:[{overdueDays:3},{overdueDays:null}]})'),null);
+});

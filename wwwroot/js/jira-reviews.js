@@ -4,6 +4,12 @@ function jiraClosureStatus(issue) {
 
 function jiraOverdueStages(issue) { return (issue.stageTimings||[]).filter(x=>x.overdueDays>0); }
 
+function jiraStageOverdueTotal(issue) {
+  const stages=issue.stageTimings||[];
+  if(!stages.length||stages.some(stage=>!Number.isFinite(stage.overdueDays)))return null;
+  return stages.reduce((total,stage)=>total+Math.max(0,stage.overdueDays),0);
+}
+
 function jiraStageTimingHtml(issue) {
   const stages=issue.stageTimings||[];
   const overdue=jiraOverdueStages(issue);
@@ -19,7 +25,8 @@ function jiraReviewIssue(record) {
 function jiraReviewIdentity(issue) { return `${issue.projectKey}|${issue.issueId||issue.key}`; }
 
 function jiraClosureCells(issue) {
-  return `<td><a href="${esc(issue.url)}" target="_blank" rel="noopener noreferrer">${esc(issue.key)}</a><small class="jira-cell-note">${esc(issue.projectKey)}</small></td><td class="jira-review-title">${esc(issue.summary)}</td><td><span class="jira-severity ${esc(issue.severityKey?.toLowerCase())}">${esc(issue.severityLabel)}</span></td><td><span class="${issue.isOnTime===false?'jira-overdue-tag':issue.isOnTime===true?'jira-ok-tag':'jira-unknown-tag'}">${jiraClosureStatus(issue)}</span></td><td>${jiraStageTimingHtml(issue)}</td><td>${typeof issue.isOnTime==='boolean'?`${issue.closureOverdueDays}天`:'—'}</td><td>${esc(String(issue.closedAt||'').slice(0,10))||'—'}</td>`;
+  const overdueDays=jiraStageOverdueTotal(issue);
+  return `<td><a href="${esc(issue.url)}" target="_blank" rel="noopener noreferrer">${esc(issue.key)}</a><small class="jira-cell-note">${esc(issue.projectKey)}</small></td><td class="jira-review-title">${esc(issue.summary)}</td><td><span class="jira-severity ${esc(issue.severityKey?.toLowerCase())}">${esc(issue.severityLabel)}</span></td><td>${jiraStageTimingHtml(issue)}</td><td>${overdueDays===null?'<span class="jira-unknown-tag" title="阶段数据或时效标准不完整，无法计算累计超期天数">无法判定</span>':`${overdueDays}天`}</td><td>${esc(String(issue.closedAt||'').slice(0,10))||'—'}</td>`;
 }
 
 function jiraReviewCsv(title,headers,rows) {
@@ -31,22 +38,23 @@ function jiraReviewCsv(title,headers,rows) {
 }
 
 function jiraClosureExportRow(issue) {
-  return [issue.projectKey,issue.key,issue.summary,issue.severityLabel,jiraClosureStatus(issue),
-    jiraOverdueStages(issue).map(x=>`${x.name}：${x.overdueDays}天`).join('；'),typeof issue.isOnTime==='boolean'?issue.closureOverdueDays:'无法判定',
+  return [issue.projectKey,issue.key,issue.summary,issue.severityLabel,
+    jiraOverdueStages(issue).map(x=>`${x.name}：${x.overdueDays}天`).join('；'),jiraStageOverdueTotal(issue)??'无法判定',
     issue.closedAt||'',issue.timingReliable?issue.closureElapsedDays:'无法判定',issue.closureLimitDays??'未配置'];
 }
-const jiraClosureHeaders=['所属项目','Jira编号','标题','严重等级','是否关闭超期','超期阶段及天数','关闭超期天数','关闭日期','关闭周期天数','关闭总周期时限'];
+const jiraClosureHeaders=['所属项目','Jira编号','标题','严重等级','超期阶段及天数','超期天数（各阶段累计）','关闭日期','关闭周期天数','关闭总周期时限'];
 
 function jiraReviewSelect(label,key,values) {
   return `<label><span>${esc(label)}</span><select data-review-filter="${key}"><option value="">全部</option>${[...new Set(values)].filter(x=>x!==null&&x!==undefined&&x!=='').sort().map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label>`;
 }
 
-async function openJiraClosedDetails(data) {
-  const items=data.issues.filter(x=>x.stageCode==='closed');
+async function openJiraClosedDetails(data,{onTimeOnly=false}={}) {
+  const items=data.issues.filter(x=>x.stageCode==='closed'&&(!onTimeOnly||x.isOnTime===true));
+  const title=onTimeOnly?'按期关闭问题（总周期）':'已关闭问题';
   let page=1,filtered=items,records=[],reviewError='',recordRequest,loaded=!hasPermission('JIRA_REVIEW_VIEW');
   const trigger=document.activeElement;
   const filters={};
-  modalRoot.innerHTML=`<div class="modal-backdrop jira-detail-backdrop"><div class="jira-detail-modal" role="dialog" aria-modal="true" aria-label="已关闭问题"><div class="jira-detail-head"><div><h3>已关闭问题 · ${items.length}项</h3><p>按所属项目及当前严重等级匹配关闭总周期；展开超期阶段可查看各阶段耗时与标准；超期天数向上取整。</p></div><div class="jira-detail-actions"><button type="button" class="btn btn-light btn-sm" data-closed-export>导出筛选结果</button><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div></div><div class="jira-detail-filters jira-closed-filters"><label><span>编号 / 标题</span><input data-review-filter="keyword" placeholder="搜索问题"></label>${jiraReviewSelect('项目','project',items.map(x=>x.projectKey))}${jiraReviewSelect('严重等级','severity',items.map(x=>x.severityLabel))}${jiraReviewSelect('关闭时效','timing',['按期','超期','无法判定'])}${jiraReviewSelect('超期阶段','stage',items.flatMap(x=>jiraOverdueStages(x).map(s=>s.name)))}${jiraReviewSelect('复盘状态','review',['已复盘','未复盘'])}<label><span>关闭日期起</span><input type="date" data-review-filter="from"></label><label><span>关闭日期止</span><input type="date" data-review-filter="to"></label></div><div data-closed-review-status></div><div class="jira-detail-body" data-closed-body></div></div></div>`;
+  modalRoot.innerHTML=`<div class="modal-backdrop jira-detail-backdrop"><div class="jira-detail-modal" role="dialog" aria-modal="true" aria-label="${title}"><div class="jira-detail-head"><div><h3>${title} · ${items.length}项</h3><p>${onTimeOnly?'仅展示总关闭周期达标的问题，仍可能存在阶段超期。':'展示全部已关闭问题。'}超期天数为各阶段超期天数（分别向上取整）的累计；展开超期阶段可查看耗时与标准。</p></div><div class="jira-detail-actions"><button type="button" class="btn btn-light btn-sm" data-closed-export>导出筛选结果</button><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div></div><div class="jira-detail-filters jira-closed-filters"><label><span>编号 / 标题</span><input data-review-filter="keyword" placeholder="搜索问题"></label>${jiraReviewSelect('项目','project',items.map(x=>x.projectKey))}${jiraReviewSelect('严重等级','severity',items.map(x=>x.severityLabel))}${jiraReviewSelect('总周期时效','timing',onTimeOnly?['按期']:['按期','超期','无法判定'])}${jiraReviewSelect('超期阶段','stage',items.flatMap(x=>jiraOverdueStages(x).map(s=>s.name)))}${jiraReviewSelect('复盘状态','review',['已复盘','未复盘'])}<label><span>关闭日期起</span><input type="date" data-review-filter="from"></label><label><span>关闭日期止</span><input type="date" data-review-filter="to"></label></div><div data-closed-review-status></div><div class="jira-detail-body" data-closed-body></div></div></div>`;
   const host=modalRoot.querySelector('.jira-detail-modal');
   const onKey=e=>{if(byId('drawer-root').childElementCount)return;if(e.key==='Escape')close();if(e.key==='Tab')jiraTrapFocus(e,host);};
   const close=()=>{recordRequest?.abort();document.removeEventListener('keydown',onKey);modalRoot.replaceChildren();trigger?.focus?.();};
@@ -64,7 +72,7 @@ async function openJiraClosedDetails(data) {
     host.querySelector('[data-review-filter="review"]').disabled=!hasPermission('JIRA_REVIEW_VIEW')||!loaded||!!reviewError;
     host.querySelector('[data-closed-export]').disabled=!filtered.length;
     const visible=filtered.slice((page-1)*50,page*50);
-    host.querySelector('[data-closed-body]').innerHTML=filtered.length?`<div class="jira-detail-table-wrap"><table class="jira-closed-table"><thead><tr><th>操作</th><th>Jira编号 / 项目</th><th>标题</th><th>严重等级</th><th>是否关闭超期</th><th>超期阶段</th><th>超期天数</th><th>关闭日期</th><th>复盘状态</th></tr></thead><tbody>${visible.map((x,index)=>{const record=reviewFor(x),eligible=x.timingReliable&&(x.isOnTime===false||jiraOverdueStages(x).length>0),canCreate=hasPermission('JIRA_REVIEW_CREATE')&&eligible&&loaded&&!reviewError;return `<tr><td><button type="button" class="btn btn-light btn-sm" data-closed-review="${index}" ${record||canCreate?'':'disabled'} title="${esc(record?'查看已保存复盘':!hasPermission('JIRA_REVIEW_CREATE')?'没有新增复盘权限':!x.timingReliable?'历史数据不完整，无法复盘':!eligible?'该问题未发现超期':!loaded?'正在读取复盘状态':reviewError?'请先重试读取复盘状态':'填写超期复盘')}">${record?'查看 / 编辑':'复盘'}</button>${record||canCreate?'':`<small class="jira-cell-note">${!hasPermission('JIRA_REVIEW_CREATE')?'无新增权限':!x.timingReliable?'历史不完整':!eligible?'未发现超期':!loaded?'读取状态中…':'状态加载失败，请重试'}</small>`}</td>${jiraClosureCells(x)}<td>${record?'已复盘':hasPermission('JIRA_REVIEW_VIEW')&&loaded&&!reviewError?'未复盘':'—'}</td></tr>`;}).join('')}</tbody></table></div><div class="jira-detail-pagination"><span>筛选后 ${filtered.length} 项 · 第 ${page}/${pages} 页</span><div><button class="btn btn-light btn-sm" type="button" data-closed-prev ${page===1?'disabled':''}>上一页</button><button class="btn btn-light btn-sm" type="button" data-closed-next ${page===pages?'disabled':''}>下一页</button></div></div>`:jiraNoData('当前筛选条件下暂无已关闭问题');
+    host.querySelector('[data-closed-body]').innerHTML=filtered.length?`<div class="jira-detail-table-wrap"><table class="jira-closed-table"><thead><tr><th>操作</th><th>Jira编号 / 项目</th><th>标题</th><th>严重等级</th><th>超期阶段</th><th title="各阶段超期天数之和">超期天数</th><th>关闭日期</th><th>复盘状态</th></tr></thead><tbody>${visible.map((x,index)=>{const record=reviewFor(x),eligible=x.timingReliable&&(x.isOnTime===false||jiraOverdueStages(x).length>0),canCreate=hasPermission('JIRA_REVIEW_CREATE')&&eligible&&loaded&&!reviewError;return `<tr><td><button type="button" class="btn btn-light btn-sm" data-closed-review="${index}" ${record||canCreate?'':'disabled'} title="${esc(record?'查看已保存复盘':!hasPermission('JIRA_REVIEW_CREATE')?'没有新增复盘权限':!x.timingReliable?'历史数据不完整，无法复盘':!eligible?'该问题未发现超期':!loaded?'正在读取复盘状态':reviewError?'请先重试读取复盘状态':'填写超期复盘')}">${record?'查看 / 编辑':'复盘'}</button>${record||canCreate?'':`<small class="jira-cell-note">${!hasPermission('JIRA_REVIEW_CREATE')?'无新增权限':!x.timingReliable?'历史不完整':!eligible?'未发现超期':!loaded?'读取状态中…':'状态加载失败，请重试'}</small>`}</td>${jiraClosureCells(x)}<td>${record?'已复盘':hasPermission('JIRA_REVIEW_VIEW')&&loaded&&!reviewError?'未复盘':'—'}</td></tr>`;}).join('')}</tbody></table></div><div class="jira-detail-pagination"><span>筛选后 ${filtered.length} 项 · 第 ${page}/${pages} 页</span><div><button class="btn btn-light btn-sm" type="button" data-closed-prev ${page===1?'disabled':''}>上一页</button><button class="btn btn-light btn-sm" type="button" data-closed-next ${page===pages?'disabled':''}>下一页</button></div></div>`:jiraNoData('当前筛选条件下暂无已关闭问题');
     host.querySelector('[data-closed-prev]')?.addEventListener('click',()=>{page--;render();});
     host.querySelector('[data-closed-next]')?.addEventListener('click',()=>{page++;render();});
     host.querySelectorAll('[data-closed-review]').forEach(button=>button.onclick=async()=>{
@@ -83,7 +91,7 @@ async function openJiraClosedDetails(data) {
     loaded=true;render();
   };
   host.querySelectorAll('[data-review-filter]').forEach(input=>input.addEventListener(input.tagName==='INPUT'&&input.type!=='date'?'input':'change',()=>{filters[input.dataset.reviewFilter]=input.value;page=1;render();}));
-  host.querySelector('[data-closed-export]').onclick=()=>jiraReviewCsv('已关闭问题',jiraClosureHeaders,filtered.map(jiraClosureExportRow));
+  host.querySelector('[data-closed-export]').onclick=()=>jiraReviewCsv(title,jiraClosureHeaders,filtered.map(jiraClosureExportRow));
   render();host.querySelector('input').focus();await loadRecords();
 }
 
@@ -156,7 +164,7 @@ async function renderJiraReviews() {
     if(state.route!=='jira-reviews')return;
     const records=data.items;let page=1,filtered=records;
     const filters={};
-    content.innerHTML=`<section class="jira-panel"><div class="jira-panel-head"><div><h3>已复盘问题</h3><p>当前Jira来源的共享复盘记录；所有统计仅代表已复盘样本。</p></div><button class="btn btn-light" type="button" data-review-export>导出筛选结果</button></div><div class="jira-detail-filters jira-review-filters"><label><span>编号 / 标题 / 原因</span><input data-review-filter="keyword" placeholder="搜索复盘记录"></label>${jiraReviewSelect('项目','project',records.map(x=>x.snapshot.projectKey))}${jiraReviewSelect('严重等级','severity',records.map(x=>x.snapshot.severityLabel))}${jiraReviewSelect('责任人','person',records.map(x=>x.responsiblePerson))}${jiraReviewSelect('原因分类','category',records.map(x=>x.categoryName))}${jiraReviewSelect('超期阶段','stage',records.flatMap(x=>jiraOverdueStages(x.snapshot).map(s=>s.name)))}<label><span>复盘日期起</span><input type="date" data-review-filter="from"></label><label><span>复盘日期止</span><input type="date" data-review-filter="to"></label></div></section><div data-review-analytics></div><section class="jira-panel" data-review-table></section>`;
+    content.innerHTML=`<section class="jira-panel"><div class="jira-panel-head"><div><h3>已复盘问题</h3><p>当前Jira来源的共享复盘记录；所有统计仅代表已复盘样本，超期天数为各阶段超期天数之和。</p></div><button class="btn btn-light" type="button" data-review-export>导出筛选结果</button></div><div class="jira-detail-filters jira-review-filters"><label><span>编号 / 标题 / 原因</span><input data-review-filter="keyword" placeholder="搜索复盘记录"></label>${jiraReviewSelect('项目','project',records.map(x=>x.snapshot.projectKey))}${jiraReviewSelect('严重等级','severity',records.map(x=>x.snapshot.severityLabel))}${jiraReviewSelect('责任人','person',records.map(x=>x.responsiblePerson))}${jiraReviewSelect('原因分类','category',records.map(x=>x.categoryName))}${jiraReviewSelect('超期阶段','stage',records.flatMap(x=>jiraOverdueStages(x.snapshot).map(s=>s.name)))}<label><span>复盘日期起</span><input type="date" data-review-filter="from"></label><label><span>复盘日期止</span><input type="date" data-review-filter="to"></label></div></section><div data-review-analytics></div><section class="jira-panel" data-review-table></section>`;
     const host=content;
     const render=()=>{
       const keyword=(filters.keyword||'').toLowerCase();
@@ -166,7 +174,7 @@ async function renderJiraReviews() {
       const counts=values=>[...jiraGroupBy(values,x=>x)].map(([name,items])=>({name,count:items.length})).sort((a,b)=>b.count-a.count);
       host.querySelector('[data-review-analytics]').innerHTML=`<div class="jira-review-kpis"><strong>${filtered.length}<small>已复盘问题</small></strong><strong>${filtered.filter(x=>x.snapshot.closureOverdueDays>0).length}<small>关闭总周期超期</small></strong><strong>${new Set(filtered.map(x=>x.responsiblePerson)).size}<small>涉及责任人</small></strong></div><div class="jira-review-charts">${jiraReviewBars('原因分类分布',counts(filtered.map(x=>x.categoryName)),'category')}${jiraReviewBars('超期阶段分布',counts(filtered.flatMap(x=>jiraOverdueStages(x.snapshot).map(s=>s.name))),'stage')}${jiraReviewBars('责任人关联问题数',counts(filtered.map(x=>x.responsiblePerson)),'person')}</div><p class="form-hint">一条问题可能涉及多个超期阶段；责任人关联数量仅表示复盘记录分布。</p>`;
       host.querySelector('[data-review-export]').disabled=!filtered.length;
-      host.querySelector('[data-review-table]').innerHTML=filtered.length?`<div class="jira-review-table-wrap"><table class="jira-closed-table"><thead><tr><th>操作</th><th>Jira编号 / 项目</th><th>标题</th><th>严重等级</th><th>是否关闭超期</th><th>超期阶段</th><th>超期天数</th><th>关闭日期</th><th>处理超时原因</th><th>责任人</th><th>原因分类</th><th>复盘人 / 时间</th></tr></thead><tbody>${visible.map((r,i)=>`<tr><td><div class="inline-actions"><button class="btn btn-light btn-sm" type="button" data-review-open="${i}">${hasPermission('JIRA_REVIEW_EDIT')?'查看 / 编辑':'查看'}</button>${hasPermission('JIRA_REVIEW_DELETE')?`<button class="btn btn-danger btn-sm" type="button" data-review-delete="${i}">删除</button>`:''}</div></td>${jiraClosureCells(jiraReviewIssue(r))}<td class="jira-review-reason">${esc(r.reason)}</td><td>${esc(r.responsiblePerson)}</td><td>${esc(r.categoryName)}</td><td>${esc(r.createdBy)}<small class="jira-cell-note">${esc(fmtDate(r.createdAt))}</small></td></tr>`).join('')}</tbody></table></div><div class="jira-detail-pagination"><span>筛选后 ${filtered.length} 项 · 第 ${page}/${pages} 页</span><div><button class="btn btn-light btn-sm" type="button" data-review-prev ${page===1?'disabled':''}>上一页</button><button class="btn btn-light btn-sm" type="button" data-review-next ${page===pages?'disabled':''}>下一页</button></div></div>`:jiraNoData('暂无复盘记录，可从Jira看板的“已关闭问题”进入复盘');
+      host.querySelector('[data-review-table]').innerHTML=filtered.length?`<div class="jira-review-table-wrap"><table class="jira-closed-table"><thead><tr><th>操作</th><th>Jira编号 / 项目</th><th>标题</th><th>严重等级</th><th>超期阶段</th><th title="各阶段超期天数之和">超期天数</th><th>关闭日期</th><th>处理超时原因</th><th>责任人</th><th>原因分类</th><th>复盘人 / 时间</th></tr></thead><tbody>${visible.map((r,i)=>`<tr><td><div class="inline-actions"><button class="btn btn-light btn-sm" type="button" data-review-open="${i}">${hasPermission('JIRA_REVIEW_EDIT')?'查看 / 编辑':'查看'}</button>${hasPermission('JIRA_REVIEW_DELETE')?`<button class="btn btn-danger btn-sm" type="button" data-review-delete="${i}">删除</button>`:''}</div></td>${jiraClosureCells(jiraReviewIssue(r))}<td class="jira-review-reason">${esc(r.reason)}</td><td>${esc(r.responsiblePerson)}</td><td>${esc(r.categoryName)}</td><td>${esc(r.createdBy)}<small class="jira-cell-note">${esc(fmtDate(r.createdAt))}</small></td></tr>`).join('')}</tbody></table></div><div class="jira-detail-pagination"><span>筛选后 ${filtered.length} 项 · 第 ${page}/${pages} 页</span><div><button class="btn btn-light btn-sm" type="button" data-review-prev ${page===1?'disabled':''}>上一页</button><button class="btn btn-light btn-sm" type="button" data-review-next ${page===pages?'disabled':''}>下一页</button></div></div>`:jiraNoData('暂无复盘记录，可从Jira看板的“已关闭问题”进入复盘');
       host.querySelector('[data-review-prev]')?.addEventListener('click',()=>{page--;render();});host.querySelector('[data-review-next]')?.addEventListener('click',()=>{page++;render();});
       const refresh=async()=>{
         const next=await api('/internal/jira-reviews');if(state.route!=='jira-reviews')return;records.splice(0,records.length,...next.items);
