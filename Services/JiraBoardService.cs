@@ -207,7 +207,7 @@ public sealed partial class JiraBoardService
         var funnelCounts = Stages.Select(stage => new
         {
             code = stage.Code,
-            name = stage.Name,
+            name = stage.Code == "new" ? "创建" : stage.Name,
             order = stage.Order,
             count = issues.Count(x => x.MaxReachedStageOrder >= stage.Order)
         }).ToArray();
@@ -217,7 +217,6 @@ public sealed partial class JiraBoardService
             stage.name,
             stage.order,
             stage.count,
-            share = Percent(stage.count, issues.Count),
             previousConversion = Percent(stage.count, index == 0 ? issues.Count : funnelCounts[index - 1].count),
             dropFromPrevious = index == 0 ? 0 : Math.Max(0, funnelCounts[index - 1].count - stage.count)
         }).ToArray();
