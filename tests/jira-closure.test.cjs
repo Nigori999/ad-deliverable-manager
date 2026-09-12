@@ -61,3 +61,21 @@ test('无样本返回空值；年度同比与环比基期一致',()=>{
   assert.equal(run('jiraClosureSummary([]).onTimeRate'),null);
   assert.equal(run("jiraComparisonStart(Date.parse('2026-01-01'),'year','yoy')"),run("jiraComparisonStart(Date.parse('2026-01-01'),'year','mom')"));
 });
+
+
+test('卡片副描述统计阶段超期问题数，独立于总周期按期率',()=>{
+  context.items=Array.from({length:23},(_,i)=>({...issue(`AD-${i}`,'2026-09-02T00:00:00Z',10,i!==0),
+    stageTimings:[{overdueDays:i===0?0:2},{overdueDays:i===0?0:1}]}));
+  let s=run('jiraClosureSummary(items)');
+  assert.equal(s.onTimeClosed,22);assert.equal(s.stageOverdueClosed,22);assert.equal(s.unassessableStageClosed,0);
+  context.items.forEach(x=>x.isOnTime=false);s=run('jiraClosureSummary(items)');
+  assert.equal(s.onTimeRate,0);assert.equal(s.stageOverdueClosed,22);
+});
+
+test('阶段无法判定独立计数，已确认阶段超期的问题不重复计入未知',()=>{
+  context.items=[[],[{overdueDays:null}],[{overdueDays:0},{overdueDays:null}],
+    [{overdueDays:2},{overdueDays:null}],[{overdueDays:0}]].map(stageTimings=>({stageCode:'closed',isOnTime:true,stageTimings}));
+  context.items.push({stageCode:'analysis',stageTimings:[{overdueDays:9}]});
+  const s=run('jiraClosureSummary(items)');
+  assert.equal(s.stageOverdueClosed,1);assert.equal(s.unassessableStageClosed,3);assert.equal(s.onTimeRate,100);
+});

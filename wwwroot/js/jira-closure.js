@@ -5,7 +5,13 @@ function jiraClosureSummary(issues) {
   const closed = issues.filter(x => x.stageCode === 'closed');
   const assessed = closed.filter(x => typeof x.isOnTime === 'boolean');
   const onTime = assessed.filter(x => x.isOnTime).length;
-  return { onTimeClosed:onTime, assessedClosed:assessed.length, unassessableClosed:closed.length-assessed.length,
+  const stageResults = closed.map(issue => {
+    const stages = issue.stageTimings || [];
+    if (stages.some(stage => stage.overdueDays > 0)) return true;
+    return stages.length && stages.every(stage => Number.isFinite(stage.overdueDays)) ? false : null;
+  });
+  return { stageOverdueClosed:stageResults.filter(x => x === true).length,
+    unassessableStageClosed:stageResults.filter(x => x === null).length, onTimeClosed:onTime, assessedClosed:assessed.length, unassessableClosed:closed.length-assessed.length,
     onTimeRate:assessed.length ? onTime*100/assessed.length : null };
 }
 
