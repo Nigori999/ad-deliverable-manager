@@ -152,5 +152,29 @@ if(output)fs.mkdirSync(output,{recursive:true});
    assert.ok(layout.scroll<=layout.width+1&&layout.hintTop>=layout.controlBottom,JSON.stringify(layout));
    assert.ok(layout.fields.every(x=>x.input<=x.label+1),JSON.stringify(layout));
  }
+ // Unknown closure timing stays in the denominator throughout card and chart rendering.
+ await page.setViewportSize({width:1440,height:900});
+ await page.evaluate(()=>{
+   const base=jiraBoardState.analysis.issues[0];
+   const issues=[true,false,null].map((onTime,i)=>({...base,key:`RATE-${i}`,issueId:`rate-${i}`,isOnTime:onTime,
+     closureElapsedDays:i===0?14:15,closureOverdueDays:i===0?0:1,closedAt:'2026-09-02T00:00:00Z',
+     closureEvents:[{closedAt:'2026-09-02T00:00:00Z',reopenedAt:null,elapsedDays:i===0?14:15,isOnTime:onTime,timingReliable:true}]}));
+   const data=jiraBoardState.analysis;
+   data.issues=issues;data.summary={...data.summary,...jiraClosureSummary(issues),total:3,closed:3};
+   jiraBoardState.comparison={unit:'month',mode:'mom',from:'2026-09-01',to:'2026-09-11'};
+   renderJiraResults(data);
+ });
+ assert.match(await page.locator('[data-jira-kind="on-time"]').innerText(),/33.3%/);
+ const ratePoint=page.locator('[data-jira-compare-point][data-kind="current"][data-metric="rate"]').first();
+ assert.match(await ratePoint.getAttribute('aria-label'),/按期 1\/3，总周期无法判定 1/);
+ await page.locator('[data-jira-kind="on-time"]').click();
+ assert.equal(await page.locator('.jira-closed-table tbody tr').count(),1);await page.locator('.jira-detail-close').click();
+ await page.evaluate(()=>{
+   const data=jiraBoardState.analysis;
+   data.issues.push({...data.issues[0],key:'NO-CLOSE-TIME',issueId:'missing',closedAt:null,closureElapsedDays:null,isOnTime:null,timingReliable:false,closureEvents:[]});
+   data.summary={...data.summary,...jiraClosureSummary(data.issues),total:4,closed:4};renderJiraResults(data);
+ });
+ assert.match(await page.locator('[data-jira-kind="on-time"]').innerText(),/25.0%/);
+ assert.match(await page.locator('#jira-closure-comparison').innerText(),/缺少关闭状态操作时间/);
  assert.deepEqual(errors,[]);console.log('PASS: full application scripts/styles; review CRUD, slow/error/retry/cancel/save failure, readonly permissions; standard/compact/closed drilldowns with 121 rows at five viewport sizes; chart entry points; zero uncaught JS errors (mock API).');}finally{await browser.close();server.close();}
 })().catch(e=>{console.error(e);process.exit(1)});

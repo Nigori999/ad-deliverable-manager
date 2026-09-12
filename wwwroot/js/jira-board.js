@@ -780,7 +780,7 @@ function renderJiraResults(data) {
   jiraBoardState.pdfReady=false;
   const warnings = [];
   if (data.truncated) warnings.push(`Jira共返回 ${jiraNumber(data.sourceTotal)} 条，当前看板为保护服务器仅分析前 5,000 条，请缩小查询条件。`);
-  if (data.historyTruncated) warnings.push(`有 ${jiraNumber(data.historyTruncated)} 条问题的 Jira 变更历史超过接口单次展开上限，其历史时效无法可靠判定，已从按期关闭率和平均周期有效样本中排除，请核对Jira历史完整性。`);
+  if (data.historyTruncated) warnings.push(`有 ${jiraNumber(data.historyTruncated)} 条问题的 Jira 变更历史超过接口单次展开上限，其历史时效无法可靠判定；已关闭的问题仍计入按期关闭率分母，不计入按期分子和平均周期有效样本。请核对Jira历史完整性。`);
   if (data.unmatchedStatuses.length) warnings.push(`有 ${data.unmatchedStatuses.reduce((sum, x) => sum + x.count, 0)} 条问题状态未匹配处理阶段：${data.unmatchedStatuses.map(x => `${x.status}(${x.count})`).join('、')}。`);
   if (data.unmatchedSeverities.length) warnings.push(`有 ${data.unmatchedSeverities.reduce((sum, x) => sum + x.count, 0)} 条问题的严重等级无法映射为 S/A/B/C，因此不参与超时判定：${data.unmatchedSeverities.map(x => `${x.severity}(${x.count})`).join('、')}。`);
   const results = byId('jira-board-results');
@@ -1012,7 +1012,7 @@ async function exportJiraDetails(title,items,overdueMode,button,{compact=false}=
   const rows=items.map(issue=>{
     if(compact)return [issue.projectKey,issue.sourceSchemes.join('、'),issue.key,issue.summary,issue.severityLabel,issue.assignee,issue.status,issue.stageName];
     const comment=jiraBoardState.commentCache.get(jiraCommentKey(issue))||{};
-    return [issue.projectKey,issue.sourceSchemes.join('、'),issue.key,issue.summary,issue.severityLabel,issue.assignee,issue.status,issue.stageName,comment.error?`最新评论加载失败：${comment.error}`:(comment.body||''),comment.author||'',comment.created||'',issue.createdAt,issue.closedAt||'',issue.stageElapsedDays,issue.stageLimitDays??'',issue.stageOverdueDays,issue.closureElapsedDays,issue.closureLimitDays??'',issue.closureOverdueDays];
+    return [issue.projectKey,issue.sourceSchemes.join('、'),issue.key,issue.summary,issue.severityLabel,issue.assignee,issue.status,issue.stageName,comment.error?`最新评论加载失败：${comment.error}`:(comment.body||''),comment.author||'',comment.created||'',issue.createdAt,issue.closedAt||'',issue.stageElapsedDays,issue.stageLimitDays??'',issue.stageOverdueDays,issue.stageCode==='closed'&&!issue.timingReliable?'无法判定':issue.closureElapsedDays??'无法判定',issue.closureLimitDays??'',issue.stageCode==='closed'&&typeof issue.isOnTime!=='boolean'?'无法判定':issue.closureOverdueDays];
   });
   const csv='\uFEFF'+[headers,...rows].map(row=>row.map(jiraCsvCell).join(',')).join('\r\n');
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});

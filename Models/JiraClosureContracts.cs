@@ -1,7 +1,7 @@
 namespace AdDeliverableManager.Models;
 
 public sealed record JiraStageTiming(string Code, string Name, double ElapsedDays, int? LimitDays, int? OverdueDays);
-public sealed record JiraClosureEvent(DateTimeOffset ClosedAt, DateTimeOffset? ReopenedAt, double ElapsedDays, bool? IsOnTime, bool TimingReliable);
+public sealed record JiraClosureEvent(DateTimeOffset ClosedAt, DateTimeOffset? ReopenedAt, double? ElapsedDays, bool? IsOnTime, bool TimingReliable);
 public sealed record JiraReviewSnapshot(
     string JiraBaseUrl, string IssueId, string ProjectKey, string Key, string Summary, string Url,
     string SeverityLabel, string SeverityKey, DateTimeOffset CreatedAt, DateTimeOffset ClosedAt,

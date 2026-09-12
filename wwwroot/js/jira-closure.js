@@ -12,7 +12,7 @@ function jiraClosureSummary(issues) {
   });
   return { stageOverdueClosed:stageResults.filter(x => x === true).length,
     unassessableStageClosed:stageResults.filter(x => x === null).length, onTimeClosed:onTime, assessedClosed:assessed.length, unassessableClosed:closed.length-assessed.length,
-    onTimeRate:assessed.length ? onTime*100/assessed.length : null };
+    onTimeRate:closed.length ? onTime*100/closed.length : null };
 }
 
 function jiraCalendarOffset(value) {
@@ -61,23 +61,21 @@ function jiraPeriodSample(issues,start,end,offset) {
   if (start===null || end===null) return { rate:null,days:null,onTime:0,assessed:0,unknown:0,count:0,durationCount:0,issues:[],start,end };
   const samples=[];
   for (const issue of issues) {
-    const events=(issue.closureEvents||[]).filter(event => {
-      const closed=Date.parse(event.closedAt)+offset;
-      return closed>=start && closed<end && (!event.reopenedAt || Date.parse(event.reopenedAt)+offset>=end);
-    });
-    const event=events.at(-1);
-    if (event) samples.push({...issue,stageCode:'closed',closedAt:event.closedAt,closureElapsedDays:event.elapsedDays,
+    // Choose the latest closure operation at period end before testing membership.
+    // An earlier closed status must not reappear after a later closure is reopened.
+    const event=(issue.closureEvents||[]).filter(x=>Date.parse(x.closedAt)+offset<end)
+      .reduce((latest,x)=>!latest||Date.parse(x.closedAt)>=Date.parse(latest.closedAt)?x:latest,null);
+    if(!event)continue;
+    const closed=Date.parse(event.closedAt)+offset;
+    if(closed<start||(event.reopenedAt&&Date.parse(event.reopenedAt)+offset<end))continue;
+    samples.push({...issue,stageCode:'closed',closedAt:event.closedAt,closureElapsedDays:event.elapsedDays,
       isOnTime:event.isOnTime,timingReliable:event.timingReliable,stageTimings:[],
       closureOverdueDays:event.isOnTime===false ? Math.max(1,Math.ceil(event.elapsedDays-issue.closureLimitDays)) : 0});
-    else if (issue.stageCode==='closed' && !issue.timingReliable && issue.closedAt) {
-      const closed=Date.parse(issue.closedAt)+offset;
-      if (closed>=start && closed<end) samples.push({...issue,isOnTime:null,timingReliable:false,stageTimings:[]});
-    }
   }
   const assessed=samples.filter(x=>typeof x.isOnTime==='boolean');
   const durations=samples.filter(x=>x.timingReliable && Number.isFinite(x.closureElapsedDays));
   const onTime=assessed.filter(x=>x.isOnTime).length;
-  return {rate:assessed.length?onTime*100/assessed.length:null,
+  return {rate:samples.length?onTime*100/samples.length:null,
     days:durations.length?durations.reduce((sum,x)=>sum+x.closureElapsedDays,0)/durations.length:null,
     onTime,assessed:assessed.length,unknown:samples.length-assessed.length,count:samples.length,
     durationCount:durations.length,issues:samples,start,end};
@@ -124,7 +122,7 @@ function jiraComparisonChart(rows,metric) {
   const grids=Array.from({length:5},(_,i)=>{const v=max*i/4;return `<line x1="${left}" y1="${y(v)}" x2="${width-15}" y2="${y(v)}" stroke="#e8edf5"/><text x="${left-8}" y="${y(v)+4}" text-anchor="end">${v.toFixed(metric==='rate'?0:1)}${metric==='rate'?'%':''}</text>`;}).join('');
   const dots=rows.map((row,i)=>['current','base'].map(kind=>{
     const sample=row[kind],value=sample[metric];if(value===null)return '';
-    const label=`${jiraComparisonRangeText(sample)} ${kind==='current'?'本期':'对比期'}：${value.toFixed(1)}${metric==='rate'?'%':'天'}；按期 ${sample.onTime}/${sample.assessed}，无法判定 ${sample.unknown}，周期有效样本 ${sample.durationCount}`;
+    const label=`${jiraComparisonRangeText(sample)} ${kind==='current'?'本期':'对比期'}：${value.toFixed(1)}${metric==='rate'?'%':'天'}；按期 ${sample.onTime}/${sample.count}，总周期无法判定 ${sample.unknown}，周期有效样本 ${sample.durationCount}`;
     return `<g data-jira-compare-point="${i}" data-kind="${kind}" data-metric="${metric}" role="button" tabindex="0" aria-label="${esc(label)}"><title>${esc(label)}</title><circle cx="${x(i)}" cy="${y(value)}" r="12" fill="transparent"/><circle cx="${x(i)}" cy="${y(value)}" r="4" fill="${kind==='current'?'#3b5ccc':'#e49b43'}"/></g>`;
   }).join('')).join('');
   const latest=rows.at(-1),a=latest.current[metric],b=latest.base[metric];
@@ -140,7 +138,8 @@ function renderJiraClosureComparisons(data) {
     <div class="jira-compare-body"><div class="jira-compare-controls"><label><span>统计粒度</span><select data-compare="unit">${[['week','周'],['month','月'],['year','年']].map(([v,n])=>`<option value="${v}" ${v===settings.unit?'selected':''}>${n}</option>`).join('')}</select></label><label><span>对比方式</span><select data-compare="mode"><option value="yoy" ${settings.mode==='yoy'?'selected':''}>同比</option><option value="mom" ${settings.mode==='mom'?'selected':''}>环比</option></select></label><label><span>起始周期</span><input type="date" data-compare="from" value="${esc(settings.from)}" max="${esc(data.cutoffDate)}"></label><label><span>截至日期</span><input type="date" data-compare="to" value="${esc(settings.to)}" max="${esc(data.cutoffDate)}"></label><button type="button" class="btn btn-light btn-sm" data-compare-apply>更新图表</button></div>
     ${settings.unit==='year'?'<p class="form-hint">按完整年度统计时，同比与环比均以上一年为基期。</p>':''}
     <p class="form-hint">起始日期按所选粒度对齐周期起点，最多展示120个周期。范围仅包含本次查询命中的问题；状态、创建时间等查询条件可能限制历史样本。</p>
-    ${data.truncated?'<div class="jira-warning">查询问题数量超过上限，无法形成完整对比。请缩小范围后重新分析。</div>':`<div class="jira-two-column"><section class="jira-compare-card"><h3>按期关闭率${settings.mode==='yoy'?'同比':'环比'}</h3><p>总周期达标的已关闭问题 ÷ 可判定时效的已关闭问题；超期问题计入分母。</p>${jiraComparisonChart(rows,'rate')}</section><section class="jira-compare-card"><h3>关闭周期${settings.mode==='yoy'?'同比':'环比'}</h3><p>周期内已关闭问题的平均创建至关闭天数，包含超期关闭问题。</p>${jiraComparisonChart(rows,'days')}</section></div>`}</div>`;
+    ${data.issues.some(x=>x.stageCode==='closed'&&!x.closedAt)?'<p class="form-hint">部分已关闭问题缺少关闭状态操作时间，无法归入周/月/年，未纳入对比图；仍计入总览按期关闭率的分母。</p>':''}
+    ${data.truncated?'<div class="jira-warning">查询问题数量超过上限，无法形成完整对比。请缩小范围后重新分析。</div>':`<div class="jira-two-column"><section class="jira-compare-card"><h3>按期关闭率${settings.mode==='yoy'?'同比':'环比'}</h3><p>总周期达标的已关闭问题 ÷ 周期内全部已关闭问题；超期及无法判定均计入分母。</p>${jiraComparisonChart(rows,'rate')}</section><section class="jira-compare-card"><h3>关闭周期${settings.mode==='yoy'?'同比':'环比'}</h3><p>周期内已关闭问题的平均创建至关闭天数，包含超期关闭问题。</p>${jiraComparisonChart(rows,'days')}</section></div>`}</div>`;
   host.querySelector('[data-compare-apply]').onclick=()=>{
     const read=key=>host.querySelector(`[data-compare="${key}"]`).value;
     if(!read('from')||!read('to')||read('from')>read('to')||read('to')>data.cutoffDate){toast('请选择有效的起止日期，不能晚于统计截止日期。','error');return;}
