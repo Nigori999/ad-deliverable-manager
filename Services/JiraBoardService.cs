@@ -173,7 +173,7 @@ public sealed partial class JiraBoardService
             : new DateTimeOffset(cutoffDate.Year, cutoffDate.Month, cutoffDate.Day, 23, 59, 59, serverNow.Offset);
 
         var jql = BuildJql(connection.ProjectKey, cutoffDate, additionalJql);
-        var requestedFields = new[] { "summary", "status", "assignee", "created", "resolutiondate", severityFieldId, variantFieldId }
+        var requestedFields = new[] { "summary", "status", "assignee", "created", severityFieldId, variantFieldId }
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var issues = new List<AnalyzedIssue>();
@@ -199,7 +199,7 @@ public sealed partial class JiraBoardService
 
         var closedCount = issues.Count(x => x.StageCode == "closed");
         var activeCount = issues.Count - closedCount;
-        var closedDurations = issues.Where(x => x.StageCode == "closed" && x.ClosedAt.HasValue)
+        var closedDurations = issues.Where(x => x.StageCode == "closed" && x.TimingReliable && x.ClosedAt.HasValue)
             .Select(x => (x.ClosedAt!.Value - x.CreatedAt).TotalDays)
             .Where(x => x >= 0)
             .ToArray();
@@ -207,7 +207,7 @@ public sealed partial class JiraBoardService
         var funnelCounts = Stages.Select(stage => new
         {
             code = stage.Code,
-            name = stage.Name,
+            name = stage.Code == "new" ? "创建" : stage.Name,
             order = stage.Order,
             count = issues.Count(x => x.MaxReachedStageOrder >= stage.Order)
         }).ToArray();
@@ -217,7 +217,6 @@ public sealed partial class JiraBoardService
             stage.name,
             stage.order,
             stage.count,
-            share = Percent(stage.count, issues.Count),
             previousConversion = Percent(stage.count, index == 0 ? issues.Count : funnelCounts[index - 1].count),
             dropFromPrevious = index == 0 ? 0 : Math.Max(0, funnelCounts[index - 1].count - stage.count)
         }).ToArray();
@@ -267,7 +266,7 @@ public sealed partial class JiraBoardService
             };
         }).ToArray();
 
-        var severityAverages = issues.Where(x => x.StageCode == "closed" && x.ClosedAt.HasValue)
+        var severityAverages = issues.Where(x => x.StageCode == "closed" && x.TimingReliable && x.ClosedAt.HasValue)
             .GroupBy(x => x.SeverityLabel, StringComparer.OrdinalIgnoreCase)
             .Select(group => new
             {
@@ -296,6 +295,8 @@ public sealed partial class JiraBoardService
         return new
         {
             generatedAt = serverNow,
+            effectiveCutoff,
+            jiraBaseUrl = connection.BaseUrl,
             cutoffDate = cutoffDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             project = connection.ProjectKey,
             standard = new { standard.Id, standard.ProjectName, standard.RuleNote, standard.Revision },
@@ -308,6 +309,10 @@ public sealed partial class JiraBoardService
                 total = issues.Count,
                 active = activeCount,
                 closed = closedCount,
+                assessedClosed = issues.Count(x => x.StageCode == "closed" && x.IsOnTime.HasValue),
+                onTimeClosed = issues.Count(x => x.StageCode == "closed" && x.IsOnTime == true),
+                onTimeRate = Percent(issues.Count(x => x.StageCode == "closed" && x.IsOnTime == true), closedCount),
+                unassessableClosed = issues.Count(x => x.StageCode == "closed" && !x.IsOnTime.HasValue),
                 closureRate = Percent(closedCount, issues.Count),
                 averageClosureDays = Average(closedDurations),
                 stageOverdue = issues.Count(x => x.StageCode != "closed" && x.StageOverdueDays > 0),
@@ -322,6 +327,37 @@ public sealed partial class JiraBoardService
             unmatchedSeverities,
             issues = issues.Select(ToIssueResponse).ToArray()
         };
+    }
+
+    public async Task<JiraReviewSnapshot> GetReviewSnapshotAsync(JiraReviewRequest request, CancellationToken ct)
+    {
+        var connection = await ConnectionForProjectAsync(request.ProjectKey, ct);
+        var key = (request.IssueKey ?? "").Trim().ToUpperInvariant();
+        if (!IssueKeyRegex().IsMatch(key)) throw new ArgumentException("Jira问题编号格式无效。");
+        var severityField = ValidateFieldId(request.SeverityFieldId);
+        var variantField = ValidateFieldId(request.VariantFieldId, "ECU Variant字段");
+        var standard = await _configuration.GetEffectiveStandardAsync(connection.BaseUrl, connection.ProjectKey, ct)
+            ?? throw new ArgumentException("当前项目没有启用的时效标准，请完成配置后重新分析。");
+        var cutoffDate = ValidateCutoffDate(request.CutoffDate);
+        using var server = await GetJsonAsync(connection, "serverInfo", ct);
+        var now = ParseJiraDate(GetString(server.RootElement, "serverTime")) ?? DateTimeOffset.Now;
+        if (cutoffDate > DateOnly.FromDateTime(now.Date)) throw new ArgumentException("统计截止日期不能晚于当前日期。");
+        var cutoff = cutoffDate == DateOnly.FromDateTime(now.Date) ? now
+            : new DateTimeOffset(cutoffDate.Year, cutoffDate.Month, cutoffDate.Day, 23, 59, 59, now.Offset);
+        var fields = Uri.EscapeDataString($"summary,status,assignee,created,project,{severityField},{variantField}");
+        using var page = await GetJsonAsync(connection, $"issue/{Uri.EscapeDataString(key)}?fields={fields}&expand=changelog", ct);
+        var project = page.RootElement.GetProperty("fields").GetProperty("project");
+        if (!string.Equals(GetString(project, "key"), connection.ProjectKey, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("问题不属于所选项目，请重新分析。");
+        var issue = ParseIssue(page.RootElement, connection, severityField, variantField, cutoff, standard);
+        if (issue.StageCode != "closed" || !issue.TimingReliable)
+            throw new InvalidOperationException("问题未关闭或历史数据不完整，无法保存复盘，请重新分析并核对Jira历史。");
+        if (issue.IsOnTime != false && !issue.StageTimings.Any(x => x.OverdueDays > 0))
+            throw new InvalidOperationException("该问题未发现关闭总周期或阶段超期，无需填写超期复盘。");
+        return new(connection.BaseUrl, issue.IssueId, connection.ProjectKey, issue.Key, issue.Summary, issue.Url,
+            issue.SeverityLabel, issue.SeverityKey, issue.CreatedAt, issue.ClosedAt!.Value, issue.ClosureElapsedDays!.Value,
+            issue.ClosureLimitDays, issue.IsOnTime.HasValue ? issue.ClosureOverdueDays : null,
+            issue.StageTimings, standard.Id, standard.Revision, cutoffDate.ToString("yyyy-MM-dd"));
     }
 
     public async Task<object> GetLatestCommentsAsync(JiraBoardCommentRequest request, CancellationToken ct = default)
@@ -411,8 +447,8 @@ public sealed partial class JiraBoardService
             ? DisplayValue(variantValue) ?? "其他/未填写"
             : "其他/未填写";
         var variantKey = NormalizeVariant(variantLabel);
-        var createdAt = ParseJiraDate(GetString(fields, "created")) ?? cutoff;
-        var resolutionDate = ParseJiraDate(GetString(fields, "resolutiondate"));
+        var createdDate = ParseJiraDate(GetString(fields, "created"));
+        var createdAt = createdDate ?? cutoff;
         var allChanges = ReadChanges(element).OrderBy(x => x.Created).ToArray();
         var changes = allChanges.Where(x => x.Created <= cutoff).ToArray();
         var historyTruncated = true;
@@ -432,11 +468,13 @@ public sealed partial class JiraBoardService
         var activeStage = StageFor(initialStatus, standard);
         var activeStageStarted = createdAt;
         var completed = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-        DateTimeOffset? lastClosedAt = activeStage == "closed" ? resolutionDate : null;
+        var closureEvents = new List<JiraClosureEvent>();
+        var closureLimit = ClosureLimit(severityKey, standard);
+        DateTimeOffset? lastClosedAt = null;
 
         foreach (var change in statusChanges)
         {
-            if (change.Created < createdAt) continue;
+            if (createdDate.HasValue && change.Created < createdAt) continue;
             var newStage = StageFor(change.ToValue, standard);
             if (!newStage.Equals(activeStage, StringComparison.OrdinalIgnoreCase))
             {
@@ -445,11 +483,22 @@ public sealed partial class JiraBoardService
                     var days = Math.Max(0, (change.Created - activeStageStarted).TotalDays);
                     completed[activeStage] = completed.GetValueOrDefault(activeStage) + days;
                 }
+                if (activeStage == "closed" && closureEvents.Count > 0)
+                    closureEvents[^1] = closureEvents[^1] with { ReopenedAt = change.Created };
                 activeStage = newStage;
                 activeStageStarted = change.Created;
             }
-            if (newStage == "closed") lastClosedAt = change.Created;
-            else if (activeStage != "closed") lastClosedAt = null;
+            // Every transition into a configured closed status is a closure operation,
+            // including transitions between two statuses mapped to the closed stage.
+            if (newStage == "closed")
+            {
+                lastClosedAt = change.Created;
+                double? elapsed = createdDate.HasValue ? (change.Created - createdAt).TotalDays : null;
+                var reliable = !historyTruncated && elapsed.HasValue && elapsed.Value >= 0;
+                closureEvents.Add(new(change.Created, null, elapsed,
+                    reliable && closureLimit.HasValue ? elapsed!.Value <= closureLimit.Value : null, reliable));
+            }
+            else lastClosedAt = null;
         }
 
         var stageCode = StageFor(status, standard);
@@ -458,7 +507,6 @@ public sealed partial class JiraBoardService
             activeStage = stageCode;
             activeStageStarted = statusChanges.LastOrDefault()?.Created ?? createdAt;
         }
-        if (stageCode == "closed" && !lastClosedAt.HasValue && resolutionDate.HasValue && resolutionDate.Value <= cutoff) lastClosedAt = resolutionDate;
         var maxReachedStageOrder = new[] { initialStatus, status }
             .Concat(statusChanges.Select(x => x.ToValue))
             .Select(value => StageFor(value, standard))
@@ -467,17 +515,28 @@ public sealed partial class JiraBoardService
             .Max();
 
         var stageElapsedDays = Math.Max(0, (cutoff - activeStageStarted).TotalDays);
-        var closureElapsedDays = Math.Max(0, ((stageCode == "closed" ? lastClosedAt ?? cutoff : cutoff) - createdAt).TotalDays);
+        DateTimeOffset? closureEnd = stageCode == "closed" ? lastClosedAt : cutoff;
+        double? closureElapsedDays = createdDate.HasValue && closureEnd.HasValue && closureEnd.Value >= createdAt
+            ? (closureEnd.Value - createdAt).TotalDays : null;
         var stageLimit = StageLimit(stageCode, severityKey, standard);
-        var closureLimit = ClosureLimit(severityKey, standard);
+        var timingReliable = stageCode == "closed" && !historyTruncated && closureElapsedDays.HasValue && lastClosedAt.HasValue && lastClosedAt.Value <= cutoff;
+        var stageTimings = Stages.Where(x => x.Code != "closed" && completed.ContainsKey(x.Code)).Select(stage =>
+        {
+            var days = completed[stage.Code];
+            var limit = StageLimit(stage.Code, severityKey, standard);
+            return new JiraStageTiming(stage.Code, stage.Name, Round(days), limit,
+                !historyTruncated && createdDate.HasValue && limit.HasValue ? OverdueDays(days, limit) : null);
+        }).ToArray();
         var stageOverdue = stageCode == "closed" ? 0 : OverdueDays(stageElapsedDays, stageLimit);
-        var closureOverdue = stageCode == "closed" ? OverdueDays(closureElapsedDays, closureLimit) : OverdueDays((cutoff - createdAt).TotalDays, closureLimit);
+        var closureOverdue = closureElapsedDays.HasValue ? OverdueDays(closureElapsedDays.Value, closureLimit) : 0;
 
         return new AnalyzedIssue(
             key, summary, $"{connection.BaseUrl}/browse/{Uri.EscapeDataString(key)}", status, stageCode,
             StageName(stageCode), assignee, severityLabel, severityKey, variantLabel, variantKey,
             maxReachedStageOrder, createdAt, stageCode == "closed" ? lastClosedAt : null,
-            Round(stageElapsedDays), stageLimit, stageOverdue, Round(closureElapsedDays), closureLimit, closureOverdue, completed, historyTruncated);
+            Round(stageElapsedDays), stageLimit, stageOverdue, closureElapsedDays, closureLimit, closureOverdue, completed, historyTruncated,
+            GetString(element, "id") ?? key, timingReliable && closureLimit.HasValue ? closureElapsedDays!.Value <= closureLimit.Value : null,
+            timingReliable, stageTimings, closureEvents.ToArray());
     }
 
     private static object ToIssueResponse(AnalyzedIssue issue) => new
@@ -503,7 +562,12 @@ public sealed partial class JiraBoardService
         issue.ClosureLimitDays,
         issue.ClosureOverdueDays,
         issue.CompletedStageDays,
-        issue.HistoryTruncated
+        issue.HistoryTruncated,
+        issue.IssueId,
+        issue.IsOnTime,
+        issue.TimingReliable,
+        issue.StageTimings,
+        issue.ClosureEvents
     };
 
     private static ChangeValue[] ReadChanges(JsonElement issue)
@@ -903,9 +967,10 @@ public sealed partial class JiraBoardService
         string SeverityLabel, string SeverityKey, string VariantLabel, string VariantKey,
         int MaxReachedStageOrder, DateTimeOffset CreatedAt, DateTimeOffset? ClosedAt,
         double StageElapsedDays, int? StageLimitDays, int StageOverdueDays,
-        double ClosureElapsedDays, int? ClosureLimitDays, int ClosureOverdueDays,
+        double? ClosureElapsedDays, int? ClosureLimitDays, int ClosureOverdueDays,
         Dictionary<string, double> CompletedStageDays,
-        bool HistoryTruncated = false);
+        bool HistoryTruncated, string IssueId, bool? IsOnTime, bool TimingReliable,
+        JiraStageTiming[] StageTimings, JiraClosureEvent[] ClosureEvents);
 }
 
 public sealed class JiraBoardException : Exception

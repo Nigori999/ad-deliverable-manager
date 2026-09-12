@@ -80,6 +80,7 @@ public sealed class DictionaryRepository
                        WHEN 'ISSUE_DEPARTMENT' THEN (SELECT COUNT(*) FROM IssueSnapshots x WHERE x.DepartmentItemId=i.Id)
                        WHEN 'ISSUE_SOURCE' THEN (SELECT COUNT(*) FROM IssueSnapshots x WHERE x.SourceItemId=i.Id)
                        WHEN 'ISSUE_SEVERITY' THEN (SELECT COUNT(*) FROM IssueSnapshots x WHERE x.SeverityItemId=i.Id)
+                       WHEN 'JIRA_OVERTIME_REASON' THEN (SELECT COUNT(*) FROM JiraClosureReviews x WHERE x.CategoryItemId=i.Id)
                        WHEN 'ISSUE_STATUS' THEN (SELECT COUNT(*) FROM IssueSnapshotCounts x WHERE x.StatusItemId=i.Id)
                        ELSE 0 END,
                    (SELECT COUNT(*) FROM DictionaryItems child WHERE child.ParentItemId=i.Id AND child.IsEnabled=1)
@@ -372,6 +373,7 @@ public sealed class DictionaryRepository
         command.Transaction = transaction;
         command.CommandText = dictionaryCode.ToUpperInvariant() switch
         {
+            JiraReviewRepository.ReasonDictionary => "SELECT COUNT(*) FROM JiraClosureReviews WHERE CategoryItemId=$id",
             DeliverableCategory => "SELECT COUNT(*) FROM Deliverables WHERE CategoryId=$id",
             IssueDepartment => "SELECT COUNT(*) FROM IssueSnapshots WHERE DepartmentItemId=$id",
             IssueSource => "SELECT COUNT(*) FROM IssueSnapshots WHERE SourceItemId=$id",

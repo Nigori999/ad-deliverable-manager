@@ -1,0 +1,137 @@
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const context=vm.createContext({Date,Map,Set,console});
+vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../wwwroot/js/jira-closure.js'),'utf8'),context);
+const run=(script)=>vm.runInContext(script,context);
+const issue=(key,date,days,onTime,limit=14)=>({key,projectKey:'AD',stageCode:'closed',closedAt:date,
+  closureLimitDays:limit,closureElapsedDays:days,isOnTime:onTime,timingReliable:true,
+  closureEvents:[{closedAt:date,reopenedAt:null,elapsedDays:days,isOnTime:onTime,timingReliable:true}]});
+
+test('按期率分母包括所有已关闭（含无法判定），排除未关闭',()=>{
+  context.items=[issue('AD-1','2026-09-02T12:00:00+08:00',14,true),issue('AD-2','2026-09-03T12:00:00+08:00',14.00001,false),
+    {...issue('AD-3','2026-09-04T12:00:00+08:00',10,null),timingReliable:false}, {stageCode:'analysis',isOnTime:null}];
+  const s=run('jiraClosureSummary(items)');assert.equal(s.onTimeRate,100/3);assert.equal(s.onTimeClosed,1);assert.equal(s.assessedClosed,2);assert.equal(s.unassessableClosed,1);
+});
+
+test('不同项目时限的服务端判定保持独立，前端不会写死S级14天',()=>{
+  context.items=[issue('AD-1','2026-09-02T12:00:00+08:00',18,true,21),{...issue('BD-1','2026-09-02T12:00:00+08:00',12,false,10),projectKey:'BD'}];
+  assert.equal(run('jiraClosureSummary(items).onTimeRate'),50);
+  context.items[0].isOnTime=false;assert.equal(run('jiraClosureSummary(items).onTimeRate'),0);
+});
+
+test('部分月份同比只比较相同进度，并按Jira时区归档',()=>{
+  context.data={effectiveCutoff:'2026-09-11T12:00:00+08:00',issues:[
+    issue('AD-1','2026-08-31T16:30:00Z',14,true),issue('AD-2','2026-09-11T05:00:00Z',15,false),
+    issue('AD-3','2025-09-11T03:00:00Z',12,true),issue('AD-4','2025-09-12T03:00:00Z',16,false)]};
+  const row=run("jiraClosureComparisons(data,'month','yoy','2026-09-01','2026-09-11')[0]");
+  assert.equal(row.current.assessed,1);assert.equal(row.current.rate,100);assert.equal(row.base.assessed,1);assert.equal(row.partial,true);
+});
+
+test('完成月份对比完整上月，不将31天和28天截成相同时长',()=>{
+  context.data={effectiveCutoff:'2026-04-02T12:00:00Z',issues:[issue('AD-1','2026-02-28T23:00:00Z',3,true),issue('AD-2','2026-03-31T23:00:00Z',5,true)]};
+  const row=run("jiraClosureComparisons(data,'month','mom','2026-03-01','2026-03-31')[0]");
+  assert.equal(row.base.count,1);assert.equal(row.current.count,1);assert.equal(row.partial,false);
+});
+
+test('周以周一开始，跨年ISO周及缺失第53周不会错配',()=>{
+  assert.equal(run("new Date(jiraPeriodStart(Date.parse('2026-01-01'),'week')).toISOString().slice(0,10)"),'2025-12-29');
+  assert.equal(run("jiraPeriodLabel(Date.parse('2025-12-29'),'week')"),'2026 W01');
+  assert.equal(run("jiraComparisonStart(Date.parse('2020-12-28'),'week','yoy')"),null);
+});
+
+test('重新打开的问题按周期末状态去重，历史关闭不会被当前未关闭状态抹掉',()=>{
+  const x=issue('AD-1','2026-01-05T00:00:00Z',4,true);
+  x.closureEvents[0].reopenedAt='2026-02-02T00:00:00Z';
+  x.closureEvents.push({closedAt:'2026-02-05T00:00:00Z',reopenedAt:'2026-02-06T00:00:00Z',elapsedDays:35,isOnTime:false,timingReliable:true});
+  x.stageCode='analysis';x.closedAt=null;
+  context.data={effectiveCutoff:'2026-03-01T00:00:00Z',issues:[x]};
+  const rows=run("jiraClosureComparisons(data,'month','mom','2026-01-01','2026-02-28')");
+  assert.equal(rows[0].current.count,1);assert.equal(rows[1].current.count,0);
+});
+
+test('关闭周期包含超期样本，无时限只影响按期率，不影响可靠周期',()=>{
+  context.items=[issue('AD-1','2026-09-02T00:00:00Z',10,true),issue('AD-2','2026-09-03T00:00:00Z',20,false),issue('AD-3','2026-09-04T00:00:00Z',30,null,null)];
+  const sample=run("jiraPeriodSample(items,Date.parse('2026-09-01'),Date.parse('2026-10-01'),0)");
+  assert.equal(sample.rate,100/3);assert.equal(sample.days,20);assert.equal(sample.unknown,1);assert.equal(sample.durationCount,3);
+});
+
+test('无样本返回空值；年度同比与环比基期一致',()=>{
+  assert.equal(run('jiraClosureSummary([]).onTimeRate'),null);
+  assert.equal(run("jiraComparisonStart(Date.parse('2026-01-01'),'year','yoy')"),run("jiraComparisonStart(Date.parse('2026-01-01'),'year','mom')"));
+});
+
+
+test('卡片副描述统计阶段超期问题数，独立于总周期按期率',()=>{
+  context.items=Array.from({length:23},(_,i)=>({...issue(`AD-${i}`,'2026-09-02T00:00:00Z',10,i!==0),
+    stageTimings:[{overdueDays:i===0?0:2},{overdueDays:i===0?0:1}]}));
+  let s=run('jiraClosureSummary(items)');
+  assert.equal(s.onTimeClosed,22);assert.equal(s.stageOverdueClosed,22);assert.equal(s.unassessableStageClosed,0);
+  context.items.forEach(x=>x.isOnTime=false);s=run('jiraClosureSummary(items)');
+  assert.equal(s.onTimeRate,0);assert.equal(s.stageOverdueClosed,22);
+});
+
+test('阶段无法判定独立计数，已确认阶段超期的问题不重复计入未知',()=>{
+  context.items=[[],[{overdueDays:null}],[{overdueDays:0},{overdueDays:null}],
+    [{overdueDays:2},{overdueDays:null}],[{overdueDays:0}]].map(stageTimings=>({stageCode:'closed',isOnTime:true,stageTimings}));
+  context.items.push({stageCode:'analysis',stageTimings:[{overdueDays:9}]});
+  const s=run('jiraClosureSummary(items)');
+  assert.equal(s.stageOverdueClosed,1);assert.equal(s.unassessableStageClosed,3);assert.equal(s.onTimeRate,100);
+});
+
+
+vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../wwwroot/js/jira-reviews.js'),'utf8'),context);
+test('明细累计各阶段超期天数，不使用关闭总周期超期天数',()=>{
+  context.sample={projectKey:'AD',key:'AD-1',summary:'样本',severityLabel:'S',isOnTime:true,closureOverdueDays:0,
+    stageTimings:[{name:'分析',overdueDays:4},{name:'修复',overdueDays:3},{name:'验证',overdueDays:0}]};
+  assert.equal(run('jiraStageOverdueTotal(sample)'),7);
+  const row=run('jiraClosureExportRow(sample)'),headers=run('jiraClosureHeaders');
+  assert.equal(row.length,headers.length);assert.equal(row[headers.indexOf('超期天数（各阶段累计）')],7);
+  assert.equal(headers.includes('是否关闭超期'),false);assert.equal(headers.includes('关闭超期天数'),false);
+});
+
+test('阶段累计区分零超期和无法计算完整总数',()=>{
+  assert.equal(run('jiraStageOverdueTotal({stageTimings:[{overdueDays:0}]})'),0);
+  assert.equal(run('jiraStageOverdueTotal({stageTimings:[]})'),null);
+  assert.equal(run('jiraStageOverdueTotal({stageTimings:[{overdueDays:3},{overdueDays:null}]})'),null);
+});
+
+
+test('23条已关闭中20条按期、2条超期、1条未知，分母仍为23',()=>{
+  context.items=Array.from({length:23},(_,i)=>issue(`AD-${i}`,'2026-09-02T00:00:00Z',i<20?10:20,i<20?true:i<22?false:null));
+  assert.equal(run('jiraClosureSummary(items).onTimeRate'),20/23*100);
+  context.items=[{stageCode:'closed',isOnTime:null,closedAt:null,closureElapsedDays:null,timingReliable:false}];
+  assert.equal(run('jiraClosureSummary(items).onTimeRate'),0);
+});
+
+test('连续两个关闭状态后重开，不会回退到较早关闭状态充当周期末已关闭',()=>{
+  context.items=[{...issue('AD-1',null,0,null),stageCode:'analysis',closureEvents:[
+    {closedAt:'2026-09-02T00:00:00Z',reopenedAt:null,elapsedDays:1,isOnTime:true,timingReliable:true},
+    {closedAt:'2026-09-15T00:00:00Z',reopenedAt:'2026-09-16T00:00:00Z',elapsedDays:14,isOnTime:true,timingReliable:true}]}];
+  assert.equal(run("jiraPeriodSample(items,Date.parse('2026-09-01'),Date.parse('2026-10-01'),0).count"),0);
+  assert.equal(run("jiraPeriodSample(items,Date.parse('2026-09-01'),Date.parse('2026-09-16'),0).issues[0].closedAt"),'2026-09-15T00:00:00Z');
+});
+
+test('连续关闭状态按周期末最新操作归档，使用未经取整的关闭耗时',()=>{
+  context.items=[{...issue('AD-1','2026-02-01T00:00:01Z',14.00001,false),closureEvents:[
+    {closedAt:'2026-01-31T00:00:00Z',reopenedAt:null,elapsedDays:13,isOnTime:true,timingReliable:true},
+    {closedAt:'2026-02-01T00:00:01Z',reopenedAt:null,elapsedDays:14.00001,isOnTime:false,timingReliable:true}]}];
+  const jan=run("jiraPeriodSample(items,Date.parse('2026-01-01'),Date.parse('2026-02-01'),0)");
+  const feb=run("jiraPeriodSample(items,Date.parse('2026-02-01'),Date.parse('2026-03-01'),0)");
+  assert.equal(jan.count,1);assert.equal(jan.rate,100);assert.equal(feb.count,1);assert.equal(feb.rate,0);assert.equal(feb.days,14.00001);
+});
+
+test('总周期缺少时限的周期样本保留在分母，全未知时显示0而非无样本',()=>{
+  context.items=[issue('AD-1','2026-09-02T00:00:00Z',10,null,null)];
+  const sample=run("jiraPeriodSample(items,Date.parse('2026-09-01'),Date.parse('2026-10-01'),0)");
+  assert.equal(sample.rate,0);assert.equal(sample.count,1);assert.equal(sample.unknown,1);assert.equal(sample.days,10);
+});
+
+
+test('有关闭操作但缺少创建时间时，周期分母保留样本且不将空耗时视为0天',()=>{
+  context.items=[{stageCode:'closed',isOnTime:null,timingReliable:false,closedAt:'2026-09-02T00:00:00Z',closureElapsedDays:null,
+    closureEvents:[{closedAt:'2026-09-02T00:00:00Z',reopenedAt:null,elapsedDays:null,isOnTime:null,timingReliable:false}]}];
+  const sample=run("jiraPeriodSample(items,Date.parse('2026-09-01'),Date.parse('2026-10-01'),0)");
+  assert.equal(sample.rate,0);assert.equal(sample.count,1);assert.equal(sample.days,null);assert.equal(sample.durationCount,0);
+});

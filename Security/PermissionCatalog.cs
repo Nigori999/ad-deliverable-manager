@@ -53,6 +53,10 @@ public static class PermissionCatalog
     public const string IssueCreate = "ISSUE_CREATE";
     public const string IssueEdit = "ISSUE_EDIT";
     public const string IssueDelete = "ISSUE_DELETE";
+    public const string JiraReviewView = "JIRA_REVIEW_VIEW";
+    public const string JiraReviewCreate = "JIRA_REVIEW_CREATE";
+    public const string JiraReviewEdit = "JIRA_REVIEW_EDIT";
+    public const string JiraReviewDelete = "JIRA_REVIEW_DELETE";
     public const string JiraBoardView = "JIRA_BOARD_VIEW";
     public const string JiraStandardView = "JIRA_STANDARD_VIEW";
     public const string JiraStandardManage = "JIRA_STANDARD_MANAGE";
@@ -125,6 +129,10 @@ public static class PermissionCatalog
         (IssueCreate, "录入问题汇总", "问题管理"),
         (IssueEdit, "编辑问题汇总", "问题管理"),
         (IssueDelete, "删除问题汇总", "问题管理"),
+        (JiraReviewView, "查看超期复盘分析", "超期处理分析"),
+        (JiraReviewCreate, "新增超期复盘", "超期处理分析"),
+        (JiraReviewEdit, "编辑超期复盘", "超期处理分析"),
+        (JiraReviewDelete, "删除超期复盘", "超期处理分析"),
         (JiraBoardView, "查看JIRA看板", "JIRA看板"),
         (JiraStandardView, "查看JIRA时效标准", "系统管理"),
         (JiraStandardManage, "管理JIRA时效标准", "系统管理"),
