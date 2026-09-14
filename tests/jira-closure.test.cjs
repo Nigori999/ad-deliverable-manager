@@ -135,3 +135,32 @@ test('有关闭操作但缺少创建时间时，周期分母保留样本且不�
   const sample=run("jiraPeriodSample(items,Date.parse('2026-09-01'),Date.parse('2026-10-01'),0)");
   assert.equal(sample.rate,0);assert.equal(sample.count,1);assert.equal(sample.days,null);assert.equal(sample.durationCount,0);
 });
+
+test('柱线图按期率变化使用百分点，平均周期使用相对变化率',()=>{
+  context.row={current:{rate:80,days:8},base:{rate:50,days:10}};
+  assert.equal(run("jiraComparisonChange(row,'rate')"),30);
+  assert.equal(run("jiraComparisonChange(row,'days')"),-20);
+  assert.equal(run("jiraComparisonChangeText(row,'rate')"),'+30.0 个百分点');
+  assert.equal(run("jiraComparisonChangeText(row,'days')"),'-20.0%');
+  context.row={current:{rate:0,days:0},base:{rate:0,days:0}};
+  assert.equal(run("jiraComparisonChange(row,'rate')"),0);
+  assert.equal(run("jiraComparisonChange(row,'days')"),null);
+  assert.match(run("jiraComparisonChangeText(row,'days')"),/基期为0/);
+});
+
+test('无样本保留空值，零按期率仍绘制可穿透柱子；变化折线不跨越缺失周期',()=>{
+  context.esc=String;
+  const sample=(rate,days)=>({rate,days,start:Date.parse('2026-08-01'),end:Date.parse('2026-09-01'),onTime:0,count:2,unknown:1,durationCount:2});
+  context.chartRows=[
+    {label:'2026-07',current:sample(0,8),base:sample(50,10)},
+    {label:'2026-08',current:sample(50,10),base:sample(null,null)},
+    {label:'2026-09',current:sample(100,12),base:sample(50,10)}];
+  assert.equal(run("jiraComparisonChange(chartRows[1],'rate')"),null);
+  const svg=run("jiraComparisonSvg(chartRows,'rate','mom')");
+  assert.equal((svg.match(/data-jira-compare-point=/g)||[]).length,5);
+  assert.match(svg,/data-jira-compare-point="0" data-kind="current"/);
+  const line=svg.match(/class="jira-compare-change-line" d="([^"]*)"/)[1];
+  assert.equal((line.match(/M/g)||[]).length,2);assert.ok(!line.includes('L'));
+  assert.match(svg,/上一周期/);
+  assert.match(run("jiraComparisonSvg(chartRows,'rate','yoy')"),/去年同期/);
+});

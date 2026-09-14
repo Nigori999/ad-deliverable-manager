@@ -680,7 +680,7 @@ function jiraPdfStyles() {
     #jira-board-results, #jira-board-results * { box-sizing: border-box; }
     #jira-board-results { width: 100%; overflow: visible !important; }
     .jira-result-head { position: static !important; }
-    .jira-result-actions, .jira-result-jql, .jira-segmented, .jira-show-all, .jira-chart-tooltip { display: none !important; }
+    .jira-result-actions, .jira-result-jql, .jira-segmented, .jira-show-all, .jira-chart-tooltip, .jira-compare-tooltip { display: none !important; }
     .jira-chart-warning button { display: none !important; }
     .jira-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
     .jira-diagnosis-grid { grid-template-columns: minmax(0, 1.15fr) minmax(350px, .85fr) !important; }
@@ -689,6 +689,7 @@ function jiraPdfStyles() {
     .jira-variant-body { grid-template-columns: minmax(310px, .8fr) minmax(320px, 1.2fr) !important; }
     .jira-variant-summary { border-right: 1px solid #edf0f4 !important; border-bottom: 0 !important; padding-bottom: 0 !important; }
     .jira-trend-scroll, .jira-compare-scroll, .jira-panel, .jira-variant-body { max-width: none !important; overflow: visible !important; }
+    .jira-compare-plot>svg { min-width:0 !important; width:100% !important; }
     .jira-compare-scroll svg { min-width:0 !important; width:100% !important; }
     .jira-compare-controls button { display:none !important; }
     button, [role=\"button\"] { pointer-events: none !important; }
@@ -728,6 +729,7 @@ async function exportJiraBoardPdf() {
     const page=printDocument.createElement('main');
     page.className='jira-pdf-page';
     const results=source.cloneNode(true);
+    prepareJiraComparisonPdf(results,data,jiraBoardState.comparison);
     page.appendChild(results);
     printDocument.body.appendChild(page);
 

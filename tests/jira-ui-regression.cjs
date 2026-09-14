@@ -22,7 +22,7 @@ if(output)fs.mkdirSync(output,{recursive:true});
  const issues=Array.from({length:18},(_,i)=>{const month=i<6?'09':i<12?'08':'07',day=String(i%6+1).padStart(2,'0'),elapsed=i%3===0?18:i%3===1?14:9,onTime=elapsed<=14;
  const closedAt=`2026-${month}-${day}T12:00:00+08:00`;return {issueId:String(100+i),key:`AD-${i+1}`,summary:['城市NOA路口通行策略优化，供应商版本修复后完成验证','高速匝道变道时机异常','停车场车位识别问题'][i%3],url:`https://jira.example/browse/AD-${i+1}`,status:'Closed',stageCode:'closed',stageName:'问题关闭',assignee:'张工',severityLabel:i%2?'A级':'S级',severityKey:i%2?'A':'S',variantLabel:'ADS',variantKey:'ADS',maxReachedStageOrder:5,createdAt:new Date(Date.parse(closedAt)-elapsed*86400000).toISOString(),closedAt,closureElapsedDays:elapsed,closureLimitDays:14,closureOverdueDays:onTime?0:4,stageElapsedDays:0,stageLimitDays:null,stageOverdueDays:0,completedStageDays:{analysis:i%3===0?6:1},historyTruncated:false,isOnTime:onTime,timingReliable:true,stageTimings:[{code:'analysis',name:'原因分析',elapsedDays:i%3===0?6:1,limitDays:2,overdueDays:i%3===0?4:0},{code:'fix',name:'问题修复',elapsedDays:i%3===0?5:i%3===1?4:2,limitDays:2,overdueDays:i%3===0?3:i%3===1?2:0}],closureEvents:[{closedAt,reopenedAt:null,elapsedDays:elapsed,isOnTime:onTime,timingReliable:true}]};});
  const fixture={data:{project:'AD',standard:{id:1,projectName:'A10',revision:3},jiraBaseUrl:'https://jira.example',generatedAt:'2026-09-11T12:00:00+08:00',effectiveCutoff:'2026-09-11T12:00:00+08:00',sourceTotal:issues.length,issues},preset:{name:'A10全部问题',projectKey:'AD',severityFieldId:'customfield_100',variantFieldId:'customfield_101'}};
- await page.route('**/internal/**',async route=>{const req=route.request(),url=new URL(req.url());let body={};
+ const mockApi=async route=>{const req=route.request(),url=new URL(req.url());let body={};
  if(url.pathname==='/internal/auth/status')body={authenticated:false};
  else if(url.pathname==='/internal/jira-reviews/reference-data'){
  if(optionDelay)await new Promise(r=>setTimeout(r,optionDelay));
@@ -40,7 +40,8 @@ if(output)fs.mkdirSync(output,{recursive:true});
  else if(url.pathname==='/internal/jira-board/comments')body={items:[]};
  else throw Error(`Unexpected route ${req.method()} ${url.pathname}`);
  await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
- });
+ };
+ await page.route('**/internal/**',mockApi);
  await page.goto(`http://127.0.0.1:${server.address().port}`);await page.waitForSelector('#auth-form');
  const fontRoot=process.env.JIRA_TEST_FONT_DIR;
  if(fontRoot&&fs.existsSync(fontRoot)){
@@ -69,6 +70,61 @@ if(output)fs.mkdirSync(output,{recursive:true});
  const csv=Buffer.concat(chunks).toString('utf8');assert.equal(csv.split('\r\n').length,13);assert.ok(!csv.includes('"AD-1"'));assert.ok(!csv.includes('是否关闭超期'));
  await page.locator('.jira-detail-close').click();
  if(output)await page.locator('#jira-closure-comparison').screenshot({path:path.join(output,'jira-charts.png')});
+ // Combo charts: both period bars drill into their own samples; the line reports the change.
+ const rateChart=page.locator('.jira-compare-card').first();
+ assert.equal(await rateChart.locator('[data-jira-compare-point]').count(),5);
+ assert.equal(await rateChart.locator('[data-compare-change]').count(),2);
+ const currentBar=rateChart.locator('[data-jira-compare-point="1"][data-kind="current"]');
+ await currentBar.focus();
+ const chartTooltip=rateChart.locator('.jira-compare-tooltip');
+ assert.equal(await chartTooltip.isVisible(),true);
+ assert.match(await chartTooltip.innerText(),/上一周期 2026-07-01 ~ 2026-07-31/);
+ assert.match(await chartTooltip.innerText(),/当期 2026-08-01 ~ 2026-08-31/);
+ assert.match(await chartTooltip.innerText(),/0.0 个百分点/);
+ await currentBar.press('Escape');assert.equal(await chartTooltip.isVisible(),false);
+ for(const [kind,key] of [['base','AD-13'],['current','AD-7']]){
+   const bar=rateChart.locator(`[data-jira-compare-point="1"][data-kind="${kind}"]`);
+   await bar.focus();await bar.press('Enter');
+   await page.locator('.jira-detail-modal').waitFor();
+   assert.equal(await page.locator('.jira-detail-table-wrap tbody tr').count(),6);
+   assert.match(await page.locator('.jira-detail-table-wrap tbody tr').first().innerText(),new RegExp(key));
+   await page.locator('.jira-detail-close').click();
+ }
+ for(const unit of ['week','year','month']){
+   await page.locator('[data-compare="unit"]').selectOption(unit);
+   await page.locator('[data-compare-apply]').click();
+   assert.equal(await page.locator('.jira-compare-card').count(),2);
+   assert.equal(await page.locator('[data-jira-compare-point][data-kind="current"]').count()>0,true);
+ }
+ await page.locator('[data-compare="mode"]').selectOption('yoy');await page.locator('[data-compare-apply]').click();
+ assert.match(await rateChart.locator('.jira-compare-legend').innerText(),/去年同期/);
+ assert.equal(await rateChart.locator('[data-kind="base"]').count(),0);
+ assert.equal(await rateChart.locator('[data-compare-change]').count(),0);
+ await page.locator('[data-compare="mode"]').selectOption('mom');await page.locator('[data-compare-apply]').click();
+ // Export a long range through the actual PDF window: four periods per SVG, shared axes, two columns.
+ await page.locator('[data-compare="from"]').fill('2025-06-01');await page.locator('[data-compare-apply]').click();
+ await page.evaluate(()=>{
+   const original=window.open;
+   window.open=function(...args){const popup=original.apply(this,args);popup.print=()=>{popup.__printCalled=true;};popup.close=()=>{popup.__closeRequested=true;};window.open=original;return popup;};
+   setJiraPdfReady(true);
+ });
+ // Avoid Chromium single-process interception stalling document.open() popup stylesheet requests.
+ await page.unroute('**/internal/**',mockApi);
+ const popupPromise=page.waitForEvent('popup');await page.locator('#jira-export-pdf').click();const pdfPage=await popupPromise;
+ await pdfPage.bringToFront();
+ await pdfPage.waitForFunction(()=>window.__printCalled===true);
+ assert.equal(await pdfPage.locator('.jira-compare-card').first().locator('svg').count(),4);
+ assert.equal(await pdfPage.locator('.jira-compare-tooltip').count(),0);
+ const printLayout=await pdfPage.locator('.jira-compare-grid').evaluate(grid=>{
+   const cards=[...grid.children].map(card=>card.getBoundingClientRect());
+   return {sameRow:cards[0].top===cards[1].top,overlap:cards[0].right>cards[1].left,
+     fits:[...grid.querySelectorAll('.jira-compare-plot>svg')].every(svg=>svg.getBoundingClientRect().width<=svg.parentElement.clientWidth+1)};
+ });
+ assert.deepEqual(printLayout,{sameRow:true,overlap:false,fits:true});
+ if(output){await pdfPage.locator('#jira-closure-comparison').screenshot({path:path.join(output,'jira-charts-pdf.png')});await pdfPage.pdf({path:path.join(output,'jira-board.pdf'),preferCSSPageSize:true,printBackground:true});}
+ await pdfPage.close();
+ await page.route('**/internal/**',mockApi);
+ await page.locator('[data-compare="from"]').fill('2026-07-01');await page.locator('[data-compare-apply]').click();
  await page.locator('[data-jira-kind="closed-list"]').click();await page.waitForSelector('[data-closed-review="0"]:not([disabled])');
  assert.equal(await page.locator('.jira-closed-table th').first().innerText(),'操作');
  assert.equal(await page.locator('.jira-closed-table tbody tr').count(),18);
@@ -147,10 +203,13 @@ if(output)fs.mkdirSync(output,{recursive:true});
    await page.setViewportSize(size);
    const layout=await page.locator('#jira-closure-comparison').evaluate(host=>{
      const controls=host.querySelector('.jira-compare-controls').getBoundingClientRect(),hint=host.querySelector('.jira-compare-body>.form-hint').getBoundingClientRect();
-     return {width:host.clientWidth,scroll:host.scrollWidth,controlBottom:controls.bottom,hintTop:hint.top,fields:[...host.querySelectorAll('.jira-compare-controls label')].map(label=>({label:label.clientWidth,input:label.querySelector('input,select').getBoundingClientRect().width}))};
+     const cards=[...host.querySelectorAll('.jira-compare-card')].map(card=>card.getBoundingClientRect());
+     return {sameRow:cards[0].top===cards[1].top,width:host.clientWidth,scroll:host.scrollWidth,controlBottom:controls.bottom,hintTop:hint.top,fields:[...host.querySelectorAll('.jira-compare-controls label')].map(label=>({label:label.clientWidth,input:label.querySelector('input,select').getBoundingClientRect().width}))};
    });
+   assert.equal(layout.sameRow,size.width>760,JSON.stringify(layout));
    assert.ok(layout.scroll<=layout.width+1&&layout.hintTop>=layout.controlBottom,JSON.stringify(layout));
    assert.ok(layout.fields.every(x=>x.input<=x.label+1),JSON.stringify(layout));
+   if(output)await page.locator('#jira-closure-comparison').screenshot({path:path.join(output,`jira-charts-${size.width}.png`)});
  }
  // Unknown closure timing stays in the denominator throughout card and chart rendering.
  await page.setViewportSize({width:1440,height:900});
@@ -176,5 +235,5 @@ if(output)fs.mkdirSync(output,{recursive:true});
  });
  assert.match(await page.locator('[data-jira-kind="on-time"]').innerText(),/25.0%/);
  assert.match(await page.locator('#jira-closure-comparison').innerText(),/缺少关闭状态操作时间/);
- assert.deepEqual(errors,[]);console.log('PASS: full application scripts/styles; review CRUD, slow/error/retry/cancel/save failure, readonly permissions; standard/compact/closed drilldowns with 121 rows at five viewport sizes; chart entry points; zero uncaught JS errors (mock API).');}finally{await browser.close();server.close();}
+ assert.deepEqual(errors,[]);console.log('PASS: full application scripts/styles; review CRUD, slow/error/retry/cancel/save failure, readonly permissions; standard/compact/closed drilldowns with 121 rows at five viewport sizes; chart entry points; combo chart axes, period bars, keyboard tooltips, week/month/year and PDF layout; zero uncaught JS errors (mock API).');}finally{await browser.close();server.close();}
 })().catch(e=>{console.error(e);process.exit(1)});
