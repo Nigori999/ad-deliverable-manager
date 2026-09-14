@@ -120,79 +120,58 @@ function jiraComparisonChangeText(row,metric) {
   return `${rounded>0?'+':''}${rounded.toFixed(1)}${metric==='rate'?' 个百分点':'%'}`;
 }
 
-function jiraComparisonScale(rows,metric) {
-  const nice=value=>{
-    if(value<=0)return 1;
-    const power=10**Math.floor(Math.log10(value)),fraction=value/power;
-    return [1,2,5,10].find(step=>step>=fraction)*power;
-  };
-  const values=rows.flatMap(row=>[row.current[metric],row.base[metric]]).filter(Number.isFinite);
-  const changes=rows.map(row=>jiraComparisonChange(row,metric)).filter(Number.isFinite);
-  return {maximum:metric==='rate'?100:nice(Math.max(1,...values)),
-    changeMaximum:nice(Math.max(1,...changes.map(Math.abs)))};
-}
-
 function jiraComparisonTooltip(row,metric,mode) {
   const unit=metric==='rate'?'%':'天',baseName=mode==='yoy'?'去年同期':'上一周期';
   const describe=(sample,name)=>`${name} ${jiraComparisonRangeText(sample)}\n${Number.isFinite(sample[metric])?sample[metric].toFixed(1)+unit:'—（无有效样本）'}；按期 ${sample.onTime}/${sample.count}，总周期无法判定 ${sample.unknown}，周期有效样本 ${sample.durationCount}`;
   return `${row.label}${row.partial?'（未结束周期，按相同进度对比）':''}\n${describe(row.base,baseName)}\n${describe(row.current,'当期')}\n变化：${jiraComparisonChangeText(row,metric)}`;
 }
 
-// The export renderer shares both axes with the full chart, even when it splits a long range.
-function jiraComparisonSvg(rows,metric,mode,scale=jiraComparisonScale(rows,metric)) {
-  const width=Math.max(520,rows.length*116+124),height=330,left=58,right=66,top=48,plotHeight=224;
-  const bottom=top+plotHeight,plotWidth=width-left-right,step=plotWidth/rows.length;
-  const x=i=>left+(i+.5)*step,y=value=>bottom-value/scale.maximum*plotHeight;
-  const changeY=value=>top+plotHeight/2-value/scale.changeMaximum*plotHeight/2;
-  const unit=metric==='rate'?'%':'天',changeUnit=metric==='rate'?'百分点':'%';
-  const grids=Array.from({length:5},(_,i)=>{
-    const value=scale.maximum*i/4,change=-scale.changeMaximum+scale.changeMaximum*i/2,position=bottom-i*plotHeight/4;
-    return `<line x1="${left}" y1="${position}" x2="${width-right}" y2="${position}" stroke="#e8edf5"/><text x="${left-8}" y="${position+4}" text-anchor="end">${Number(value.toFixed(2))}</text><text class="jira-compare-change-label" x="${width-right+8}" y="${position+4}">${change>0?'+':''}${Number(change.toFixed(2))}</text>`;
-  }).join('');
-  const bars=rows.map((row,i)=>['base','current'].map(kind=>{
-    const sample=row[kind],value=sample[metric],center=x(i)+(kind==='base'?-25:25),barWidth=28;
-    if(!Number.isFinite(value))return `<text x="${center}" y="${bottom-8}" text-anchor="middle">—</text>`;
-    const name=kind==='current'?'当期':mode==='yoy'?'去年同期':'上一周期';
-    const label=`${name}：${value.toFixed(1)}${unit}；按期 ${sample.onTime}/${sample.count}，总周期无法判定 ${sample.unknown}，周期有效样本 ${sample.durationCount}。点击查看该周期已关闭问题。`;
-    const tip=jiraComparisonTooltip(row,metric,mode);
-    return `<g data-jira-compare-point="${i}" data-kind="${kind}" data-metric="${metric}" data-compare-tooltip="${esc(tip)}" role="button" tabindex="0" aria-label="${esc(jiraComparisonRangeText(sample)+' '+label)}"><rect class="jira-compare-hit" x="${center-22}" y="${top-20}" width="44" height="${plotHeight+20}" fill="transparent"/><rect class="jira-compare-bar ${kind}" x="${center-barWidth/2}" y="${y(value)}" width="${barWidth}" height="${bottom-y(value)}" rx="3" fill="${kind==='base'?'#a8b3c4':'#3b5ccc'}"/>${value===0?`<line x1="${center-barWidth/2}" x2="${center+barWidth/2}" y1="${bottom}" y2="${bottom}" stroke="${kind==='base'?'#a8b3c4':'#3b5ccc'}" stroke-width="2"/>`:''}<text class="jira-compare-value" x="${center}" y="${y(value)-8}" text-anchor="middle">${value.toFixed(1)}</text></g>`;
-  }).join('')).join('');
-  let inSegment=false;
-  const path=rows.map((row,i)=>{
-    const value=jiraComparisonChange(row,metric);
-    if(value===null){inSegment=false;return '';}
-    const segment=`${inSegment?'L':'M'}${x(i)},${changeY(value)}`;inSegment=true;return segment;
-  }).join(' ');
-  const points=rows.map((row,i)=>{
-    const value=jiraComparisonChange(row,metric);if(value===null)return '';
-    const tip=jiraComparisonTooltip(row,metric,mode);
-    return `<g data-compare-change="${i}" data-compare-tooltip="${esc(tip)}" tabindex="0" role="img" aria-label="${esc(tip)}"><circle cx="${x(i)}" cy="${changeY(value)}" r="10" fill="transparent"/><circle class="jira-compare-change-dot" cx="${x(i)}" cy="${changeY(value)}" r="4" fill="#d97706" stroke="#fff" stroke-width="1.5"/></g>`;
-  }).join('');
-  return `<svg viewBox="0 0 ${width} ${height}" style="min-width:${width}px" role="group" aria-label="${metric==='rate'?'按期关闭率':'平均关闭周期'}柱线对比图"><text x="${left}" y="20">${metric==='rate'?'按期关闭率（%）':'平均周期（天）'}</text><text class="jira-compare-change-label" x="${width-right}" y="20" text-anchor="end">变化（${changeUnit}）· 右轴</text>${grids}<line class="jira-compare-zero" x1="${left}" x2="${width-right}" y1="${changeY(0)}" y2="${changeY(0)}" stroke="#d97706" stroke-opacity=".5" stroke-dasharray="4 4"/>${bars}<path class="jira-compare-change-line" d="${path}" fill="none" stroke="#d97706" stroke-width="2.5" pointer-events="none"/>${points}${rows.map((row,i)=>`<text x="${x(i)}" y="${bottom+25}" text-anchor="middle">${esc(row.label)}${row.partial?'*':''}</text>`).join('')}</svg>`;
+function jiraComparisonOption(rows,metric,mode,width,start=null,print=false) {
+  const rate=metric==='rate',baseName=mode==='yoy'?'去年同期':'上一周期';
+  const changeName=rate?'按期率变化（百分点）':'平均周期变化率（%）';
+  const changes=rows.map(row=>jiraComparisonChange(row,metric));
+  const low=Math.min(0,...changes.filter(Number.isFinite)),high=Math.max(0,...changes.filter(Number.isFinite));
+  const option=jiraChartBase(rate?'按期关闭率同比/环比':'平均关闭周期同比/环比');
+  return {...option,legend:{...option.legend,type:'plain',left:'center',itemWidth:16,itemHeight:8,itemGap:10,data:[baseName,'当期',changeName]},
+    grid:{left:8,right:12,top:76,bottom:48,containLabel:true},
+    tooltip:{...option.tooltip,trigger:'axis',axisPointer:{type:'shadow'},formatter:params=>esc(jiraComparisonTooltip(rows[params[0].dataIndex],metric,mode)).replace(/\n/g,'<br>')},
+    xAxis:{type:'category',data:rows.map(row=>row.label+(row.partial?'*':'')),axisLabel:{hideOverlap:true,fontSize:11},axisTick:{alignWithLabel:true}},
+    yAxis:[{type:'value',name:rate?'按期率（%）':'平均周期（天）',min:0,max:rate?100:jiraChartMaximum(rows.flatMap(row=>[row.base.days,row.current.days])),axisLabel:{fontSize:11},splitLine:{lineStyle:{color:'#eaf0f6'}}},
+      {type:'value',name:rate?'变化（百分点）':'变化率（%）',min:low===high?-1:low<0?-jiraChartMaximum(changes.filter(Number.isFinite).map(value=>-value)):0,max:low===high?1:high>0?jiraChartMaximum(changes):0,axisLabel:{fontSize:11,color:'#ad620e',formatter:value=>`${value>0?'+':''}${value}`},splitLine:{show:false}}],
+    dataZoom:jiraChartZoom(rows.length,print?4:Math.max(1,Math.min(6,Math.floor((width-110)/100))),'x',start,print),
+    series:[...['base','current'].map((kind,seriesIndex)=>({name:seriesIndex?'当期':baseName,type:'bar',barMaxWidth:28,barMinHeight:2,clip:true,
+      itemStyle:{color:seriesIndex?'#3b5ccc':'#a8b3c4',borderRadius:[3,3,0,0]},label:{show:true,position:'top',fontSize:11,color:'#43536d',formatter:p=>Number.isFinite(p.value)?p.value.toFixed(1):'—'},
+      data:rows.map((row,itemIndex)=>({value:row[kind][metric],itemIndex}))})),
+      {name:changeName,type:'line',yAxisIndex:1,symbolSize:7,connectNulls:false,clip:true,itemStyle:{color:'#d97706'},lineStyle:{width:2},data:changes,
+        markLine:{silent:true,symbol:'none',label:{show:true,formatter:'变化为0',position:'insideEndTop',fontSize:10},lineStyle:{type:'dashed',color:'#d97706',opacity:.65},data:[{yAxis:0}]}}]};
 }
 
-function jiraComparisonChart(rows,metric,mode) {
+function jiraComparisonChart(rows,metric) {
   if(!rows.length)return jiraNoData('请选择有效范围，每次最多展示120个周期');
   if(!rows.some(row=>Number.isFinite(row.current[metric])||Number.isFinite(row.base[metric])))return jiraNoData('该范围暂无可判定样本，请检查查询方案及历史数据');
-  const latest=rows.at(-1),baseName=mode==='yoy'?'去年同期':'上一周期';
-  return `<div class="jira-compare-caption"><span class="jira-compare-legend"><span><i class="base"></i>${baseName}</span><span><i class="current"></i>当期</span><span><i class="change"></i>变化（右轴）</span></span><strong>${esc(latest.label)}：${esc(jiraComparisonChangeText(latest,metric))}</strong></div><div class="jira-compare-plot"><div class="jira-compare-scroll">${jiraComparisonSvg(rows,metric,mode)}</div><div class="jira-compare-tooltip" role="tooltip" hidden></div></div><div class="jira-compare-note">${metric==='rate'?'折线高于零线表示按期率提升；差值单位为百分点。':'折线低于零线表示平均周期缩短；变化率＝（当期－基期）÷ 基期。'} 柱子可点击查看明细；— 表示无有效样本。</div>`;
+  const latest=rows.at(-1);
+  return `<div class="jira-compare-caption"><strong>${esc(latest.label)}：${esc(jiraComparisonChangeText(latest,metric))}</strong></div>${jiraChartSlot('compare-'+metric,metric==='rate'?'按期关闭率同比/环比':'平均关闭周期同比/环比',340)}<div class="jira-compare-note">${metric==='rate'?'折线高于零线表示按期率提升；差值单位为百分点。':'折线低于零线表示平均周期缩短；变化率＝（当期－基期）÷ 基期。'} 无样本不绘制数值，基期周期为0时不计算周期变化率。</div>`;
 }
 
-function prepareJiraComparisonPdf(root,data,settings) {
-  const rows=jiraClosureComparisons(data,settings.unit,settings.mode,settings.from,settings.to);
-  root.querySelectorAll('.jira-compare-card').forEach((card,index)=>{
-    const plot=card.querySelector('.jira-compare-plot');if(!plot)return;
-    const metric=index===0?'rate':'days',scale=jiraComparisonScale(rows,metric),chunks=[];
-    for(let start=0;start<rows.length;start+=4)chunks.push(jiraComparisonSvg(rows.slice(start,start+4),metric,settings.mode,scale));
-    plot.innerHTML=chunks.join('');
-    plot.querySelectorAll('[tabindex]').forEach(point=>point.removeAttribute('tabindex'));
-    const note=card.querySelector('.jira-compare-note');
-    if(note)note.textContent=note.textContent.replace('柱子可点击查看明细；','');
+function mountJiraClosureComparisons(rows,mode) {
+  for(const metric of ['rate','days'])jiraMountChart('compare-'+metric,{
+    title:metric==='rate'?'按期关闭率同比/环比':'平均关闭周期同比/环比',
+    options:width=>jiraComparisonOption(rows,metric,mode,width),
+    rows:rows.flatMap((row,dataIndex)=>['base','current'].map((kind,seriesIndex)=>({
+      name:`${row.label} ${kind==='current'?'当期':mode==='yoy'?'去年同期':'上一周期'}`,
+      value:Number.isFinite(row[kind][metric])?row[kind][metric].toFixed(1)+(metric==='rate'?'%':'天'):'—',
+      detail:`${jiraComparisonRangeText(row[kind])}；按期 ${row[kind].onTime}/${row[kind].count}，总周期无法判定 ${row[kind].unknown}；变化 ${jiraComparisonChangeText(row,metric)}`,
+      dataIndex,seriesIndex,clickable:Number.isFinite(row[kind][metric])}))),
+    onClick:p=>{if(p.seriesIndex>1)return;const sample=rows[p.dataIndex][p.seriesIndex===0?'base':'current'];
+      if(!Number.isFinite(sample[metric]))return;
+      openJiraDetails(`${p.seriesIndex===1?'当期':mode==='yoy'?'去年同期':'上一周期'} ${jiraComparisonRangeText(sample)} · 已关闭问题（按周期末状态）`,sample.issues,'closure');},
+    exportOptions:width=>Array.from({length:Math.ceil(rows.length/4)},(_,index)=>({width,height:340,option:jiraComparisonOption(rows,metric,mode,width,index*4,true)}))
   });
 }
 
 function renderJiraClosureComparisons(data) {
   const host=byId('jira-closure-comparison');if(!host)return;
+  disposeJiraCharts(host);
   const settings=jiraBoardState.comparison;
   const rows=jiraClosureComparisons(data,settings.unit,settings.mode,settings.from,settings.to);
   host.innerHTML=`<div class="jira-panel-head"><div><h3>关闭效率同比 / 环比</h3><p>按关闭日期归入周期；当前严重等级匹配当前项目时效标准。* 表示未结束周期，对比期按相同进度截取。</p></div></div>
@@ -207,27 +186,5 @@ function renderJiraClosureComparisons(data) {
     jiraBoardState.comparison={unit:read('unit'),mode:read('mode'),from:read('from'),to:read('to')};
     renderJiraClosureComparisons(data);
   };
-  host.querySelectorAll('.jira-compare-plot').forEach((plot,index)=>{
-    const tooltip=plot.querySelector('.jira-compare-tooltip');
-    tooltip.id=`jira-compare-tooltip-${index}`;
-    plot.querySelectorAll('[data-compare-tooltip]').forEach(point=>{
-      point.setAttribute('aria-describedby',tooltip.id);
-      const show=event=>{
-        tooltip.textContent=point.dataset.compareTooltip;tooltip.hidden=false;
-        const bounds=plot.getBoundingClientRect(),target=point.getBoundingClientRect();
-        const anchor=Number.isFinite(event.clientX)?event.clientX:target.left+target.width/2;
-        tooltip.style.left=`${Math.max(0,Math.min(bounds.width-tooltip.offsetWidth,anchor-bounds.left+12))}px`;
-        tooltip.style.top='28px';
-      };
-      point.onmouseenter=show;point.onmousemove=show;point.onfocus=show;
-      point.onmouseleave=point.onblur=()=>{tooltip.hidden=true;};
-      point.addEventListener('keydown',event=>{if(event.key==='Escape')tooltip.hidden=true;});
-    });
-    plot.querySelector('.jira-compare-scroll').onscroll=()=>{tooltip.hidden=true;};
-  });
-  host.querySelectorAll('[data-jira-compare-point]').forEach(point=>{
-    const open=()=>{const sample=rows[Number(point.dataset.jiraComparePoint)][point.dataset.kind];
-      openJiraDetails(`${point.dataset.kind==='current'?'当期':settings.mode==='yoy'?'去年同期':'上一周期'} ${jiraComparisonRangeText(sample)} · 已关闭问题（按周期末状态）`,sample.issues,'closure');};
-    point.onclick=open;point.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open();}};
-  });
+  if(!data.truncated)mountJiraClosureComparisons(rows,settings.mode);
 }

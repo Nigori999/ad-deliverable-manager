@@ -37,7 +37,7 @@ if(output)fs.mkdirSync(output,{recursive:true});
  }else if(url.pathname.startsWith('/internal/jira-reviews/')&&req.method()==='PUT'){
  const id=Number(url.pathname.split('/').at(-1)),p=req.postDataJSON(),r=records.find(x=>x.id===id);Object.assign(r,{reason:p.reason,responsiblePerson:p.responsiblePerson,categoryItemId:p.categoryItemId,categoryName:categories.find(x=>x.id===p.categoryItemId).name,revision:r.revision+1});
  }else if(url.pathname.startsWith('/internal/jira-reviews/')&&req.method()==='DELETE'){records=records.filter(x=>x.id!==Number(url.pathname.split('/').at(-1)));}
- else if(url.pathname==='/internal/jira-board/comments')body={items:[]};
+ else if(url.pathname==='/internal/jira-board/comments')body={items:req.postDataJSON().issueKeys.map(key=>({key,body:null,created:null}))};
  else throw Error(`Unexpected route ${req.method()} ${url.pathname}`);
  await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
  };
@@ -70,36 +70,39 @@ if(output)fs.mkdirSync(output,{recursive:true});
  const csv=Buffer.concat(chunks).toString('utf8');assert.equal(csv.split('\r\n').length,13);assert.ok(!csv.includes('"AD-1"'));assert.ok(!csv.includes('是否关闭超期'));
  await page.locator('.jira-detail-close').click();
  if(output)await page.locator('#jira-closure-comparison').screenshot({path:path.join(output,'jira-charts.png')});
- // Combo charts: both period bars drill into their own samples; the line reports the change.
- const rateChart=page.locator('.jira-compare-card').first();
- assert.equal(await rateChart.locator('[data-jira-compare-point]').count(),5);
- assert.equal(await rateChart.locator('[data-compare-change]').count(),2);
- const currentBar=rateChart.locator('[data-jira-compare-point="1"][data-kind="current"]');
- await currentBar.focus();
- const chartTooltip=rateChart.locator('.jira-compare-tooltip');
- assert.equal(await chartTooltip.isVisible(),true);
- assert.match(await chartTooltip.innerText(),/上一周期 2026-07-01 ~ 2026-07-31/);
- assert.match(await chartTooltip.innerText(),/当期 2026-08-01 ~ 2026-08-31/);
- assert.match(await chartTooltip.innerText(),/0.0 个百分点/);
- await currentBar.press('Escape');assert.equal(await chartTooltip.isVisible(),false);
- for(const [kind,key] of [['base','AD-13'],['current','AD-7']]){
-   const bar=rateChart.locator(`[data-jira-compare-point="1"][data-kind="${kind}"]`);
-   await bar.focus();await bar.press('Enter');
+ // Use native ECharts graphic bounds to exercise real mouse events, including both bars.
+ const clickChart=async(name,seriesIndex,dataIndex,hover=false)=>{
+   const plot=page.locator(`#jira-ec-${name}`);await plot.evaluate(node=>node.scrollIntoView({block:'center'}));
+   const point=await plot.evaluate((node,{seriesIndex,dataIndex})=>{
+     const chart=echarts.getInstanceByDom(node),data=chart.getModel().getSeriesByIndex(seriesIndex).getData();
+     const element=data.getItemGraphicEl(data.indexOfRawIndex(dataIndex));
+     if(!element)throw Error(`No graphic for ${node.id}: ${seriesIndex}/${dataIndex}`);
+     let x,y;
+     if(element.shape?.cx!==undefined){const shape=element.shape,angle=(shape.startAngle+shape.endAngle)/2,radius=(shape.r+(shape.r0||0))/2;x=shape.cx+Math.cos(angle)*radius;y=shape.cy+Math.sin(angle)*radius;}
+     else {const bounds=element.getBoundingRect().clone();bounds.applyTransform(element.getComputedTransform());x=bounds.x+bounds.width/2;y=bounds.y+bounds.height/2;}
+     const rect=node.getBoundingClientRect();return {x:rect.left+x,y:rect.top+y};
+   },{seriesIndex,dataIndex});
+   if(hover)await page.mouse.move(point.x,point.y);else await page.mouse.click(point.x,point.y);
+ };
+ assert.equal(await page.locator('#jira-board-results [data-jira-chart]').count(),12);
+ for(const [seriesIndex,key] of [[0,'AD-13'],[1,'AD-7']]){
+   await clickChart('compare-rate',seriesIndex,1);
    await page.locator('.jira-detail-modal').waitFor();
    assert.equal(await page.locator('.jira-detail-table-wrap tbody tr').count(),6);
    assert.match(await page.locator('.jira-detail-table-wrap tbody tr').first().innerText(),new RegExp(key));
+   assert.equal(await page.locator('.jira-detail-modal [data-jira-chart] svg').count(),2);
    await page.locator('.jira-detail-close').click();
  }
+ await clickChart('compare-rate',1,1,true);
+ await page.waitForFunction(()=>[...document.querySelectorAll('#jira-ec-compare-rate div')].some(x=>x.innerText.includes('上一周期 2026-07-01')));
  for(const unit of ['week','year','month']){
-   await page.locator('[data-compare="unit"]').selectOption(unit);
-   await page.locator('[data-compare-apply]').click();
-   assert.equal(await page.locator('.jira-compare-card').count(),2);
-   assert.equal(await page.locator('[data-jira-compare-point][data-kind="current"]').count()>0,true);
+   await page.locator('[data-compare="unit"]').selectOption(unit);await page.locator('[data-compare-apply]').click();
+   assert.equal(await page.locator('.jira-compare-card svg').count(),2);
  }
  await page.locator('[data-compare="mode"]').selectOption('yoy');await page.locator('[data-compare-apply]').click();
- assert.match(await rateChart.locator('.jira-compare-legend').innerText(),/去年同期/);
- assert.equal(await rateChart.locator('[data-kind="base"]').count(),0);
- assert.equal(await rateChart.locator('[data-compare-change]').count(),0);
+ const yearly=await page.locator('#jira-ec-compare-rate').evaluate(node=>echarts.getInstanceByDom(node).getOption());
+ assert.equal(yearly.series[0].name,'去年同期');assert.ok(yearly.series[0].data.every(x=>x.value===null));
+ assert.ok(yearly.series[2].data.every(x=>x===null));
  await page.locator('[data-compare="mode"]').selectOption('mom');await page.locator('[data-compare-apply]').click();
  // Export a long range through the actual PDF window: four periods per SVG, shared axes, two columns.
  await page.locator('[data-compare="from"]').fill('2025-06-01');await page.locator('[data-compare-apply]').click();
@@ -114,11 +117,11 @@ if(output)fs.mkdirSync(output,{recursive:true});
  await pdfPage.bringToFront();
  await pdfPage.waitForFunction(()=>window.__printCalled===true);
  assert.equal(await pdfPage.locator('.jira-compare-card').first().locator('svg').count(),4);
- assert.equal(await pdfPage.locator('.jira-compare-tooltip').count(),0);
+ assert.equal(await pdfPage.locator('.jira-chart-data').count(),0);
  const printLayout=await pdfPage.locator('.jira-compare-grid').evaluate(grid=>{
    const cards=[...grid.children].map(card=>card.getBoundingClientRect());
    return {sameRow:cards[0].top===cards[1].top,overlap:cards[0].right>cards[1].left,
-     fits:[...grid.querySelectorAll('.jira-compare-plot>svg')].every(svg=>svg.getBoundingClientRect().width<=svg.parentElement.clientWidth+1)};
+     fits:[...grid.querySelectorAll('.jira-echart>svg')].every(svg=>svg.getBoundingClientRect().width<=svg.parentElement.clientWidth+1)};
  });
  assert.deepEqual(printLayout,{sameRow:true,overlap:false,fits:true});
  if(output){await pdfPage.locator('#jira-closure-comparison').screenshot({path:path.join(output,'jira-charts-pdf.png')});await pdfPage.pdf({path:path.join(output,'jira-board.pdf'),preferCSSPageSize:true,printBackground:true});}
@@ -195,12 +198,25 @@ if(output)fs.mkdirSync(output,{recursive:true});
  }
  await page.setViewportSize({width:1440,height:900});
  await page.evaluate(()=>{content.innerHTML='<div id="jira-board-results"></div>';renderJiraResults(jiraBoardState.analysis);});
- for(const selector of ['[data-jira-kind="on-time"]','[data-jira-stage]','[data-jira-duration]','[data-jira-compare-point]','[data-jira-rate-severity]','[data-jira-overdue]','[data-jira-variant]','[data-jira-trend-index]','[data-jira-followup]']){
-   const entry=selector==='[data-jira-trend-index]'?page.locator(selector).last().locator('circle.hit'):page.locator(selector).first();if(!await entry.count())continue;
-   console.log('Checking drilldown',selector);await entry.click();await page.locator('.jira-detail-modal').waitFor({timeout:5000});await page.locator('.jira-detail-close').click();
+ // Exercise every chart's shared keyboard-accessible data/drilldown entry, including zero bars.
+ for(const name of ['funnel','overdue','trend','variant','variant-assignee','closure-total','closure-severity','duration-severity','duration-stage','compare-rate','compare-days']){
+   const wrapper=page.locator(`#jira-ec-${name}`).locator('..');
+   const button=wrapper.locator('[data-chart-row]').first();if(!await button.count())continue;
+   await wrapper.locator('summary').click();await button.focus();await button.press('Enter');
+   await page.locator('.jira-detail-modal').waitFor();await page.locator('.jira-detail-close').click();
+   await wrapper.locator('summary').click();
  }
+ await page.locator('[data-jira-followup]').click();await page.locator('.jira-detail-modal').waitFor();await page.locator('.jira-detail-close').click();
  for(const size of [{width:1440,height:900},{width:1024,height:768},{width:390,height:844}]){
    await page.setViewportSize(size);
+   await page.waitForFunction(()=>[...document.querySelectorAll('[data-jira-chart]')].every(node=>!node.clientWidth||Math.abs(echarts.getInstanceByDom(node).getWidth()-node.clientWidth)<2));
+   if(size.width===1024){
+     const visible=await page.locator('#jira-ec-compare-rate').evaluate(node=>{const chart=echarts.getInstanceByDom(node);return {series:chart.getModel().getSeries().map(s=>s.getData().count()),label:chart.getModel().getComponent('xAxis').axis.scale.getExtent()};});
+     assert.deepEqual(visible,{series:[1,1,1],label:[2,2]});
+     await clickChart('compare-rate',1,2);await page.locator('.jira-detail-modal').waitFor();
+     assert.match(await page.locator('.jira-detail-table-wrap tbody tr').first().innerText(),/AD-1\b/);
+     await page.locator('.jira-detail-close').click();
+   }
    const layout=await page.locator('#jira-closure-comparison').evaluate(host=>{
      const controls=host.querySelector('.jira-compare-controls').getBoundingClientRect(),hint=host.querySelector('.jira-compare-body>.form-hint').getBoundingClientRect();
      const cards=[...host.querySelectorAll('.jira-compare-card')].map(card=>card.getBoundingClientRect());
@@ -211,6 +227,39 @@ if(output)fs.mkdirSync(output,{recursive:true});
    assert.ok(layout.fields.every(x=>x.input<=x.label+1),JSON.stringify(layout));
    if(output)await page.locator('#jira-closure-comparison').screenshot({path:path.join(output,`jira-charts-${size.width}.png`)});
  }
+ // Nonzero samples cover native events across all chart families and long category lists.
+ await page.setViewportSize({width:1440,height:1000});
+ await page.evaluate(f=>{
+   const active=Array.from({length:24},(_,i)=>({...f.data.issues[0],key:`OPEN-${i+1}`,issueId:`open-${i}`,stageCode:['new','confirm','analysis','action','verify'][i%5],stageName:['创建','问题确认','原因分析','措施确认','测试验证'][i%5],maxReachedStageOrder:i%5,status:'Analysis',
+     assignee:`处理人${String(i+1).padStart(2,'0')}（供应商项目团队）`,variantKey:i<12?'ADS':'LIDAR',variantLabel:i<12?'ADS':'LiDAR',severityKey:i%2?'A':'S',severityLabel:i%2?'A级':'S级',
+     closedAt:null,isOnTime:null,closureEvents:[],closureElapsedDays:null,stageOverdueDays:i%2?3:0,closureOverdueDays:i%3?0:4,completedStageDays:i%5>=3?{analysis:8}:{} }));
+   jiraBoardState.commentCache.clear();jiraBoardState.analysis=mergeJiraAnalyses([{...f,data:{...f.data,issues:[...f.data.issues,...active]}}],'2026-09-11');
+   jiraBoardState.comparison={unit:'month',mode:'mom',from:'2026-07-01',to:'2026-09-11'};renderJiraResults(jiraBoardState.analysis);
+ },fixture);
+ await page.waitForFunction(()=>jiraBoardState.pdfReady);
+ assert.equal(await page.evaluate(()=>jiraCharts.size),12);
+ if(output)await page.locator('#jira-board-results').screenshot({path:path.join(output,'jira-dashboard.png')});
+ for(const [name,series,index,count] of [['funnel',0,2,32],['trend',1,79,1],['duration-stage',0,2,27],['overdue',0,2,2],['variant',0,0,12],['variant-assignee',0,0,1],['closure-total',0,0,18],['closure-severity',0,0,21],['duration-severity',0,0,9],['followup',0,0,12]]){
+   await clickChart(name,series,index);await page.locator('.jira-detail-modal').waitFor({timeout:5000});
+   assert.equal(await page.locator('.jira-detail-table-wrap tbody tr').count(),count,name);
+   assert.equal(await page.evaluate(()=>jiraCharts.size),14);
+   if(name==='variant'&&output)await page.locator('.jira-detail-modal').screenshot({path:path.join(output,'jira-detail-echarts.png')});
+   await page.locator('.jira-detail-close').click();assert.equal(await page.evaluate(()=>jiraCharts.size),12);
+ }
+ await page.locator('[data-jira-variant-mode="LIDAR"]').click();
+ await page.locator('#jira-ec-variant-assignee').evaluate(node=>echarts.getInstanceByDom(node).dispatchAction({type:'dataZoom',startValue:10,endValue:11}));
+ await clickChart('variant-assignee',0,11);await page.locator('.jira-detail-modal').waitFor();
+ assert.match(await page.locator('.jira-detail-table-wrap tbody tr').first().innerText(),/OPEN-24/);
+ await page.locator('.jira-detail-close').click();
+ // Repeated partial redraws and route removal release instances instead of retaining detached DOM.
+ for(let i=0;i<3;i++){await page.locator('[data-jira-overdue-sort="count"]').click();await page.locator('[data-compare-apply]').click();}
+ assert.equal(await page.evaluate(()=>jiraCharts.size),12);
+ await page.locator('[data-jira-kind="all"]').click();await page.locator('#jira-detail-search').fill('OPEN-24');
+ assert.equal(await page.locator('#jira-ec-detail-severity').evaluate(node=>echarts.getInstanceByDom(node).getOption().series[0].data.reduce((sum,x)=>sum+x.value,0)),1);
+ await page.locator('#jira-detail-search').fill('not-present');assert.equal(await page.evaluate(()=>jiraCharts.size),12);
+ await page.locator('.jira-detail-close').click();
+ await page.evaluate(()=>{content.replaceChildren();});await page.waitForFunction(()=>jiraCharts.size===0);
+ await page.evaluate(f=>{content.innerHTML='<div id="jira-board-results"></div>';jiraBoardState.analysis=mergeJiraAnalyses([f],'2026-09-11');renderJiraResults(jiraBoardState.analysis);},fixture);
  // Unknown closure timing stays in the denominator throughout card and chart rendering.
  await page.setViewportSize({width:1440,height:900});
  await page.evaluate(()=>{
@@ -224,7 +273,7 @@ if(output)fs.mkdirSync(output,{recursive:true});
    renderJiraResults(data);
  });
  assert.match(await page.locator('[data-jira-kind="on-time"]').innerText(),/33.3%/);
- const ratePoint=page.locator('[data-jira-compare-point][data-kind="current"][data-metric="rate"]').first();
+ const ratePoint=page.locator('#jira-ec-compare-rate').locator('..').locator('[data-chart-row="1"]');
  assert.match(await ratePoint.getAttribute('aria-label'),/按期 1\/3，总周期无法判定 1/);
  await page.locator('[data-jira-kind="on-time"]').click();
  assert.equal(await page.locator('.jira-closed-table tbody tr').count(),1);await page.locator('.jira-detail-close').click();
@@ -235,5 +284,5 @@ if(output)fs.mkdirSync(output,{recursive:true});
  });
  assert.match(await page.locator('[data-jira-kind="on-time"]').innerText(),/25.0%/);
  assert.match(await page.locator('#jira-closure-comparison').innerText(),/缺少关闭状态操作时间/);
- assert.deepEqual(errors,[]);console.log('PASS: full application scripts/styles; review CRUD, slow/error/retry/cancel/save failure, readonly permissions; standard/compact/closed drilldowns with 121 rows at five viewport sizes; chart entry points; combo chart axes, period bars, keyboard tooltips, week/month/year and PDF layout; zero uncaught JS errors (mock API).');}finally{await browser.close();server.close();}
+ assert.deepEqual(errors,[]);console.log('PASS: full application scripts/styles; review CRUD, slow/error/retry/cancel/save failure, readonly permissions; standard/compact/closed drilldowns with 121 rows at five viewport sizes; chart entry points; combo chart axes, period bars, data drilldowns, week/month/year, native ECharts events, zoom, resize, lifecycle and PDF layout; zero uncaught JS errors (mock API).');}finally{await browser.close();server.close();}
 })().catch(e=>{console.error(e);process.exit(1)});

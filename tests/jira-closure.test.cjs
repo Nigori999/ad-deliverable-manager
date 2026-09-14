@@ -2,7 +2,8 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const context=vm.createContext({Date,Map,Set,console});
+const context=vm.createContext({Date,Map,Set,console,ResizeObserver:class {},MutationObserver:class {},esc:String});
+vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../wwwroot/js/jira-echarts.js'),'utf8'),context);
 vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../wwwroot/js/jira-closure.js'),'utf8'),context);
 const run=(script)=>vm.runInContext(script,context);
 const issue=(key,date,days,onTime,limit=14)=>({key,projectKey:'AD',stageCode:'closed',closedAt:date,
@@ -148,19 +149,26 @@ test('柱线图按期率变化使用百分点，平均周期使用相对变化�
   assert.match(run("jiraComparisonChangeText(row,'days')"),/基期为0/);
 });
 
-test('无样本保留空值，零按期率仍绘制可穿透柱子；变化折线不跨越缺失周期',()=>{
-  context.esc=String;
+test('ECharts组合图保留零值和空值，变化折线使用独立轴且不连接缺失周期',()=>{
   const sample=(rate,days)=>({rate,days,start:Date.parse('2026-08-01'),end:Date.parse('2026-09-01'),onTime:0,count:2,unknown:1,durationCount:2});
   context.chartRows=[
     {label:'2026-07',current:sample(0,8),base:sample(50,10)},
     {label:'2026-08',current:sample(50,10),base:sample(null,null)},
     {label:'2026-09',current:sample(100,12),base:sample(50,10)}];
-  assert.equal(run("jiraComparisonChange(chartRows[1],'rate')"),null);
-  const svg=run("jiraComparisonSvg(chartRows,'rate','mom')");
-  assert.equal((svg.match(/data-jira-compare-point=/g)||[]).length,5);
-  assert.match(svg,/data-jira-compare-point="0" data-kind="current"/);
-  const line=svg.match(/class="jira-compare-change-line" d="([^"]*)"/)[1];
-  assert.equal((line.match(/M/g)||[]).length,2);assert.ok(!line.includes('L'));
-  assert.match(svg,/上一周期/);
-  assert.match(run("jiraComparisonSvg(chartRows,'rate','yoy')"),/去年同期/);
+  const option=run("jiraComparisonOption(chartRows,'rate','mom',520)");
+  assert.equal(option.series[0].type,'bar');assert.equal(option.series[1].type,'bar');
+  assert.equal(option.series[1].data[0].value,0);assert.equal(option.series[0].data[1].value,null);
+  assert.equal(option.series[2].type,'line');assert.equal(option.series[2].yAxisIndex,1);
+  assert.equal(option.series[2].connectNulls,false);assert.deepEqual(Array.from(option.series[2].data),[-50,null,50]);
+  assert.equal(option.yAxis[0].max,100);
+  assert.equal(option.series[0].name,'上一周期');
+  assert.equal(run("jiraComparisonOption(chartRows,'rate','yoy',520).series[0].name"),'去年同期');
+});
+
+test('窄卡片通过内部范围缩放展示，PDF过滤窗口外数据并使用全量范围的统一轴刻度',()=>{
+  const narrow=run("jiraComparisonOption(chartRows,'rate','mom',300)");
+  assert.equal(narrow.dataZoom[0].endValue,2);
+  const print=run("jiraComparisonOption(chartRows,'rate','mom',600,1,true)");
+  assert.equal(print.dataZoom[0].show,false);assert.equal(print.dataZoom[0].filterMode,'filter');
+  assert.equal(print.dataZoom[0].startValue,1);assert.equal(print.series[0].data.length,3);
 });
