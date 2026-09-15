@@ -131,16 +131,75 @@ function renderJiraTrend(data) {
   document.querySelectorAll('[data-jira-trend-range]').forEach(button=>button.classList.toggle('active',button.dataset.jiraTrendRange===jiraBoardState.trendRange));
 }
 
-function renderJiraVariantAssignees(data) {
-  const host=byId('jira-variant-assignee-chart');if(!host)return;
-  disposeJiraCharts(host);host.innerHTML=jiraChartSlot('variant-assignee','当前处理人问题堆积',340);
-  const issues=data.issues.filter(issue=>issue.stageCode!=='closed'&&issue.variantKey===jiraBoardState.variantMode);
-  const groups=jiraDistribution(issues,'assignee','未分配');
-  jiraMountBars('variant-assignee',groups.map(([name,value])=>({name,value})),{title:'当前处理人问题堆积',onClick:p=>{
-    const assignee=groups[p.dataIndex][0],selected=issues.filter(x=>(x.assignee||'未分配')===assignee);
-    openJiraDetails(`${jiraBoardState.variantMode==='LIDAR'?'LiDAR':'ADS'} · ${assignee} · ${selected.length}项`,selected,'stage');
+function jiraCategoryPath(data, id) {
+  const nodes=new Map((data.categories||[]).map(x=>[String(x.id),x]));
+  const path=[],seen=new Set();let node=nodes.get(String(id));
+  while(node&&!seen.has(node.id)){seen.add(node.id);path.unshift(node);node=nodes.get(String(node.parentItemId));}
+  return path;
+}
+
+function jiraCategoryIncludes(data, issue, id) {
+  if(id==='')return true;
+  if(id==='unmapped')return !jiraCategoryPath(data,issue.categoryItemId).length;
+  return jiraCategoryPath(data,issue.categoryItemId).some(x=>String(x.id)===String(id));
+}
+
+function jiraCategoryLabel(data, issue) {
+  return jiraCategoryPath(data,issue.categoryItemId).map(x=>x.name).join(' / ')||'未分类';
+}
+
+function jiraCategoryOptions(data) {
+  const rows=(data.categories||[]).map(node=>({node,path:jiraCategoryPath(data,node.id)}));
+  rows.sort((a,b)=>{
+    for(let i=0;i<Math.min(a.path.length,b.path.length);i++){
+      if(a.path[i].id!==b.path[i].id)return a.path[i].sortOrder-b.path[i].sortOrder||a.path[i].name.localeCompare(b.path[i].name,'zh-CN')||a.path[i].id-b.path[i].id;
+    }
+    return a.path.length-b.path.length;
+  });
+  return '<option value="">全部大类</option>'+rows.map(({node,path})=>`<option value="${node.id}">${esc(path.map(x=>x.name).join(' / '))}</option>`).join('')+'<option value="unmapped">未分类</option>';
+}
+
+function jiraCategoryGroups(data, selection) {
+  const issues=data.issues.filter(x=>x.stageCode!=='closed'&&jiraCategoryIncludes(data,x,selection));
+  const groups=new Map();
+  issues.forEach(issue=>{
+    const path=jiraCategoryPath(data,issue.categoryItemId);
+    let key,name;
+    if(selection==='unmapped'){key=issue.variantLabel||'未填写';name=key;}
+    else if(!path.length){key='unmapped';name='未分类';}
+    else {
+      const index=selection===''?-1:path.findIndex(x=>String(x.id)===selection);
+      const node=path[index+1]||path[index];key=String(node.id);
+      name=node.name+(selection===key&&(data.categories||[]).some(x=>String(x.parentItemId)===selection)?'（本级）':'');
+    }
+    if(!groups.has(key))groups.set(key,{key,name,value:0,issues:[]});
+    const group=groups.get(key);group.value++;group.issues.push(issue);
+  });
+  const order=new Map((data.categories||[]).map(x=>[String(x.id),x.sortOrder]));
+  return [...groups.values()].sort((a,b)=>(order.get(a.key)??99999)-(order.get(b.key)??99999)||a.name.localeCompare(b.name,'zh-CN'));
+}
+
+function renderJiraCategories(data) {
+  const selection=jiraBoardState.categoryId;
+  const selectedName=selection==='unmapped'?'未分类':selection===''?'全部大类':jiraCategoryPath(data,selection).map(x=>x.name).join(' / ');
+  const groups=jiraCategoryGroups(data,selection);
+  byId('jira-category-selection').textContent=selectedName;
+  const pieHost=byId('jira-category-distribution');
+  disposeJiraCharts(pieHost);pieHost.innerHTML=jiraChartSlot('variant','未关闭问题分类分布',300);
+  jiraMountPie('variant',groups,{title:selectedName,onClick:p=>{
+    const item=groups[p.dataIndex];
+    openJiraDetails(`${selectedName} · ${item.name} · ${item.value}项`,item.issues,'stage',{category:true});
   }});
-  document.querySelectorAll('[data-jira-variant-mode]').forEach(button=>button.classList.toggle('active',button.dataset.jiraVariantMode===jiraBoardState.variantMode));
+  const host=byId('jira-variant-assignee-chart');
+  disposeJiraCharts(host);host.innerHTML=jiraChartSlot('variant-assignee','当前处理人问题堆积',340);
+  const issues=data.issues.filter(issue=>issue.stageCode!=='closed'&&jiraCategoryIncludes(data,issue,selection));
+  const assignees=jiraDistribution(issues,'assignee','未分配');
+  jiraMountBars('variant-assignee',assignees.map(([name,value])=>({name,value})),{title:`${selectedName} · 当前处理人问题堆积`,onClick:p=>{
+    const assignee=assignees[p.dataIndex][0],selected=issues.filter(x=>(x.assignee||'未分配')===assignee);
+    openJiraDetails(`${selectedName} · ${assignee} · ${selected.length}项`,selected,'stage',{category:true});
+  }});
+  const unmapped=data.issues.filter(x=>x.stageCode!=='closed'&&!jiraCategoryPath(data,x.categoryItemId).length).length;
+  byId('jira-category-hint').textContent=`按当前选择统计未关闭问题；选择大类包含全部下级，图中展示下一层分布。未分类 ${unmapped} 项，可切换查看原始选项。`;
 }
 
 function renderJiraOverdue(data) {
@@ -164,9 +223,6 @@ function renderJiraBoardCharts(data) {
         data:funnel.map((item,itemIndex)=>({name:item.name,value:item.count,itemIndex,itemStyle:{color:jiraStageColors[item.code]}}))}]};},
     rows:funnel.map((item,dataIndex)=>({name:item.name,value:item.count+'项',dataIndex})),onClick:p=>{const item=funnel[p.dataIndex];openJiraDetails(`${item.name}累计到达 · ${item.count}项`,data.issues.filter(x=>x.maxReachedStageOrder>=item.order),item.code==='closed'?'closure':'stage');}});
   renderJiraOverdue(data);
-  const active=data.issues.filter(x=>x.stageCode!=='closed');
-  const variants=[{key:'ADS',name:'ADS'},{key:'LIDAR',name:'LiDAR'},{key:'OTHER',name:'其他/未填写'}].map(x=>({...x,value:active.filter(issue=>issue.variantKey===x.key).length}));
-  jiraMountPie('variant',variants,{title:'未关闭问题',onClick:p=>{const item=variants[p.dataIndex],issues=active.filter(x=>x.variantKey===item.key);openJiraDetails(`${item.name}未关闭问题 · ${issues.length}项`,issues,'stage');}});
   jiraMountPie('closure-total',[{name:'已关闭',value:data.summary.closed,color:'#16a38f'},{name:'待关闭',value:data.summary.active,color:'#dce4f0'}],{title:'整体关闭率',centerText:jiraPercent(data.summary.closureRate),onClick:p=>openJiraDetails(p.dataIndex===0?'已关闭问题':'待关闭问题',data.issues.filter(x=>p.dataIndex===0?x.stageCode==='closed':x.stageCode!=='closed'),p.dataIndex===0?'closure':'stage')});
   jiraMountBars('closure-severity',data.closureRates.map(x=>({name:x.severity,value:x.rate,detail:`已关闭 ${x.closed} / 全部 ${x.total}`})),{title:'严重等级关闭率',unit:'%',max:100,onClick:p=>{const item=data.closureRates[p.dataIndex];openJiraDetails(`${item.severity}级问题关闭情况`,data.issues.filter(x=>x.severityLabel===item.severity),'closure');}});
   jiraMountBars('duration-severity',data.severityAverages.map(x=>({name:x.severity,value:x.averageDays,detail:`有效样本 ${x.sampleCount}项`})),{title:'严重等级平均关闭周期',unit:'天',onClick:p=>{const item=data.severityAverages[p.dataIndex];openJiraDetails(`${item.severity}级已关闭问题`,data.issues.filter(x=>x.stageCode==='closed'&&x.severityLabel===item.severity),'closure');}});

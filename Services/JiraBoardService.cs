@@ -15,6 +15,7 @@ public sealed partial class JiraBoardService
     private const int MaxCommentIssues = 100;
     private readonly HttpClient _http;
     private readonly JiraConfigurationRepository _configuration;
+    private readonly DictionaryRepository _dictionaries;
 
     private static readonly StageDefinition[] Stages =
     [
@@ -26,10 +27,11 @@ public sealed partial class JiraBoardService
         new("closed", "问题关闭", 5)
     ];
 
-    public JiraBoardService(HttpClient http, JiraConfigurationRepository configuration)
+    public JiraBoardService(HttpClient http, JiraConfigurationRepository configuration, DictionaryRepository dictionaries)
     {
         _http = http;
         _configuration = configuration;
+        _dictionaries = dictionaries;
     }
 
     public async Task<object> GetProjectsAsync(CancellationToken ct = default)
@@ -176,6 +178,7 @@ public sealed partial class JiraBoardService
         var requestedFields = new[] { "summary", "status", "assignee", "created", severityFieldId, variantFieldId }
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var categories = await _dictionaries.ListJiraCategoriesAsync(ct);
         var issues = new List<AnalyzedIssue>();
         var total = 0;
         var startAt = 0;
@@ -190,7 +193,8 @@ public sealed partial class JiraBoardService
             foreach (var issue in pageIssues.EnumerateArray())
             {
                 if (issues.Count >= MaxIssues) break;
-                issues.Add(ParseIssue(issue, connection, severityFieldId, variantFieldId, effectiveCutoff, standard));
+                var parsed = ParseIssue(issue, connection, severityFieldId, variantFieldId, effectiveCutoff, standard);
+                issues.Add(parsed with { CategoryItemId = DictionaryRepository.ResolveJiraCategory(categories, variantFieldId, parsed.VariantOptionId, parsed.VariantLabel) });
             }
             startAt += pageIssues.GetArrayLength();
             if (pageIssues.GetArrayLength() == 0) break;
@@ -325,6 +329,7 @@ public sealed partial class JiraBoardService
             severityAverages,
             unmatchedStatuses,
             unmatchedSeverities,
+            categories = categories.Select(x => new { x.Id, x.Name, x.ParentItemId, x.SortOrder }).ToArray(),
             issues = issues.Select(ToIssueResponse).ToArray()
         };
     }
@@ -443,10 +448,11 @@ public sealed partial class JiraBoardService
             ? DisplayValue(severityValue) ?? "未设置"
             : "未设置";
         var severityKey = NormalizeSeverity(severityLabel);
+        // Keep missing values empty so a display placeholder cannot match a configured source option.
         var variantLabel = fields.TryGetProperty(variantFieldId, out var variantValue)
-            ? DisplayValue(variantValue) ?? "其他/未填写"
-            : "其他/未填写";
-        var variantKey = NormalizeVariant(variantLabel);
+            ? DisplayValue(variantValue) ?? ""
+            : "";
+        var variantOptionId = variantValue.ValueKind == JsonValueKind.Object ? GetString(variantValue, "id") : null;
         var createdDate = ParseJiraDate(GetString(fields, "created"));
         var createdAt = createdDate ?? cutoff;
         var allChanges = ReadChanges(element).OrderBy(x => x.Created).ToArray();
@@ -532,7 +538,7 @@ public sealed partial class JiraBoardService
 
         return new AnalyzedIssue(
             key, summary, $"{connection.BaseUrl}/browse/{Uri.EscapeDataString(key)}", status, stageCode,
-            StageName(stageCode), assignee, severityLabel, severityKey, variantLabel, variantKey,
+            StageName(stageCode), assignee, severityLabel, severityKey, variantLabel, variantOptionId,
             maxReachedStageOrder, createdAt, stageCode == "closed" ? lastClosedAt : null,
             Round(stageElapsedDays), stageLimit, stageOverdue, closureElapsedDays, closureLimit, closureOverdue, completed, historyTruncated,
             GetString(element, "id") ?? key, timingReliable && closureLimit.HasValue ? closureElapsedDays!.Value <= closureLimit.Value : null,
@@ -551,7 +557,8 @@ public sealed partial class JiraBoardService
         issue.SeverityLabel,
         issue.SeverityKey,
         issue.VariantLabel,
-        issue.VariantKey,
+        issue.VariantOptionId,
+        issue.CategoryItemId,
         issue.MaxReachedStageOrder,
         issue.CreatedAt,
         issue.ClosedAt,
@@ -881,14 +888,6 @@ public sealed partial class JiraBoardService
         return "UNKNOWN";
     }
 
-    private static string NormalizeVariant(string value)
-    {
-        var normalized = value.Trim();
-        if (normalized.Equals("ADS", StringComparison.OrdinalIgnoreCase)) return "ADS";
-        if (normalized.Equals("LiDAR", StringComparison.OrdinalIgnoreCase)) return "LIDAR";
-        return "OTHER";
-    }
-
     private static bool IsSeverityValue(string value, string grade) => value == grade ||
         value.StartsWith(grade + "级", StringComparison.Ordinal) || value.StartsWith(grade + "&", StringComparison.Ordinal) ||
         value.StartsWith(grade + "/", StringComparison.Ordinal) || value.StartsWith(grade + "(", StringComparison.Ordinal) ||
@@ -964,13 +963,16 @@ public sealed partial class JiraBoardService
     private sealed record CommentValue(string? Body, string? Author, DateTimeOffset? Created);
     private sealed record AnalyzedIssue(
         string Key, string Summary, string Url, string Status, string StageCode, string StageName, string Assignee,
-        string SeverityLabel, string SeverityKey, string VariantLabel, string VariantKey,
+        string SeverityLabel, string SeverityKey, string VariantLabel, string? VariantOptionId,
         int MaxReachedStageOrder, DateTimeOffset CreatedAt, DateTimeOffset? ClosedAt,
         double StageElapsedDays, int? StageLimitDays, int StageOverdueDays,
         double? ClosureElapsedDays, int? ClosureLimitDays, int ClosureOverdueDays,
         Dictionary<string, double> CompletedStageDays,
         bool HistoryTruncated, string IssueId, bool? IsOnTime, bool TimingReliable,
-        JiraStageTiming[] StageTimings, JiraClosureEvent[] ClosureEvents);
+        JiraStageTiming[] StageTimings, JiraClosureEvent[] ClosureEvents)
+    {
+        public int? CategoryItemId { get; init; }
+    }
 }
 
 public sealed class JiraBoardException : Exception

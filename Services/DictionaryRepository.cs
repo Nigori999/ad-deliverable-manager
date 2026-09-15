@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace AdDeliverableManager.Services;
 
-public sealed class DictionaryRepository
+public sealed partial class DictionaryRepository
 {
     public const string DeliverableCategory = "DELIVERABLE_CATEGORY";
     public const string IssueDepartment = "ISSUE_DEPARTMENT";
@@ -91,6 +91,7 @@ public sealed class DictionaryRepository
         command.Parameters.AddWithValue("$typeId", type.Id);
         command.Parameters.AddWithValue("$scopeMode", type.ScopeMode);
         command.Parameters.AddWithValue("$scopeValue", scope);
+        var mappings = type.Code == JiraIssueCategoryCode ? await ReadJiraMappingsAsync(connection, ct) : new Dictionary<int, List<JiraCategoryMapping>>();
         var items = new List<object>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
@@ -102,7 +103,8 @@ public sealed class DictionaryRepository
                 parentItemId = reader.IsDBNull(5) ? (int?)null : reader.GetInt32(5), sortOrder = reader.GetInt32(6),
                 description = reader.GetNullableString(7), isEnabled = reader.GetInt32(8) == 1,
                 dictionaryCode = reader.GetString(9), dictionaryName = reader.GetString(10), scopeMode = reader.GetString(11),
-                usageCount = reader.GetInt32(12), childCount = reader.GetInt32(13)
+                usageCount = reader.GetInt32(12), childCount = reader.GetInt32(13),
+                jiraMappings = mappings.GetValueOrDefault(reader.GetInt32(0)) ?? []
             });
         }
         return items;
@@ -216,6 +218,7 @@ public sealed class DictionaryRepository
         try
         {
             var id = Convert.ToInt32(await command.ExecuteScalarAsync(ct));
+            await SaveJiraMappingsAsync(connection, transaction, type.Code, id, request.JiraMappings, ct);
             await InsertAuditAsync(connection, transaction, "DictionaryItem", id, "CREATE", operatorName, $"新增字典项 {type.Code}/{NormalizeCode(request.ItemCode)}", ct);
             await transaction.CommitAsync(ct);
             return id;
@@ -253,6 +256,7 @@ public sealed class DictionaryRepository
         try
         {
             if (await command.ExecuteNonQueryAsync(ct) == 0) throw new KeyNotFoundException("字典项不存在或已删除。");
+            await SaveJiraMappingsAsync(connection, transaction, type.Code, id, request.JiraMappings, ct);
             await InsertAuditAsync(connection, transaction, "DictionaryItem", id, "UPDATE", operatorName, $"修改字典项 {type.Code}/{value}", ct);
             await transaction.CommitAsync(ct);
         }

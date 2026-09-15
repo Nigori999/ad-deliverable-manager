@@ -20,8 +20,8 @@ if(output)fs.mkdirSync(output,{recursive:true});
  let records=[],nextId=1,optionDelay=0,optionFailure=false,saveFailure=false;
  const categories=[{id:1,name:'定位分析耗时'},{id:2,name:'跨团队或供应商依赖'}];
  const issues=Array.from({length:18},(_,i)=>{const month=i<6?'09':i<12?'08':'07',day=String(i%6+1).padStart(2,'0'),elapsed=i%3===0?18:i%3===1?14:9,onTime=elapsed<=14;
- const closedAt=`2026-${month}-${day}T12:00:00+08:00`;return {issueId:String(100+i),key:`AD-${i+1}`,summary:['城市NOA路口通行策略优化，供应商版本修复后完成验证','高速匝道变道时机异常','停车场车位识别问题'][i%3],url:`https://jira.example/browse/AD-${i+1}`,status:'Closed',stageCode:'closed',stageName:'问题关闭',assignee:'张工',severityLabel:i%2?'A级':'S级',severityKey:i%2?'A':'S',variantLabel:'ADS',variantKey:'ADS',maxReachedStageOrder:5,createdAt:new Date(Date.parse(closedAt)-elapsed*86400000).toISOString(),closedAt,closureElapsedDays:elapsed,closureLimitDays:14,closureOverdueDays:onTime?0:4,stageElapsedDays:0,stageLimitDays:null,stageOverdueDays:0,completedStageDays:{analysis:i%3===0?6:1},historyTruncated:false,isOnTime:onTime,timingReliable:true,stageTimings:[{code:'analysis',name:'原因分析',elapsedDays:i%3===0?6:1,limitDays:2,overdueDays:i%3===0?4:0},{code:'fix',name:'问题修复',elapsedDays:i%3===0?5:i%3===1?4:2,limitDays:2,overdueDays:i%3===0?3:i%3===1?2:0}],closureEvents:[{closedAt,reopenedAt:null,elapsedDays:elapsed,isOnTime:onTime,timingReliable:true}]};});
- const fixture={data:{project:'AD',standard:{id:1,projectName:'A10',revision:3},jiraBaseUrl:'https://jira.example',generatedAt:'2026-09-11T12:00:00+08:00',effectiveCutoff:'2026-09-11T12:00:00+08:00',sourceTotal:issues.length,issues},preset:{name:'A10全部问题',projectKey:'AD',severityFieldId:'customfield_100',variantFieldId:'customfield_101'}};
+ const closedAt=`2026-${month}-${day}T12:00:00+08:00`;return {issueId:String(100+i),key:`AD-${i+1}`,summary:['城市NOA路口通行策略优化，供应商版本修复后完成验证','高速匝道变道时机异常','停车场车位识别问题'][i%3],url:`https://jira.example/browse/AD-${i+1}`,status:'Closed',stageCode:'closed',stageName:'问题关闭',assignee:'张工',severityLabel:i%2?'A级':'S级',severityKey:i%2?'A':'S',variantLabel:'ADS',categoryItemId:1,maxReachedStageOrder:5,createdAt:new Date(Date.parse(closedAt)-elapsed*86400000).toISOString(),closedAt,closureElapsedDays:elapsed,closureLimitDays:14,closureOverdueDays:onTime?0:4,stageElapsedDays:0,stageLimitDays:null,stageOverdueDays:0,completedStageDays:{analysis:i%3===0?6:1},historyTruncated:false,isOnTime:onTime,timingReliable:true,stageTimings:[{code:'analysis',name:'原因分析',elapsedDays:i%3===0?6:1,limitDays:2,overdueDays:i%3===0?4:0},{code:'fix',name:'问题修复',elapsedDays:i%3===0?5:i%3===1?4:2,limitDays:2,overdueDays:i%3===0?3:i%3===1?2:0}],closureEvents:[{closedAt,reopenedAt:null,elapsedDays:elapsed,isOnTime:onTime,timingReliable:true}]};});
+ const fixture={data:{categories:[{id:1,name:'ADS',parentItemId:null,sortOrder:10},{id:2,name:'传感器',parentItemId:null,sortOrder:20},{id:3,name:'激光雷达',parentItemId:2,sortOrder:20},{id:4,name:'摄像头',parentItemId:2,sortOrder:30}],project:'AD',standard:{id:1,projectName:'A10',revision:3},jiraBaseUrl:'https://jira.example',generatedAt:'2026-09-11T12:00:00+08:00',effectiveCutoff:'2026-09-11T12:00:00+08:00',sourceTotal:issues.length,issues},preset:{name:'A10全部问题',projectKey:'AD',severityFieldId:'customfield_100',variantFieldId:'customfield_101'}};
  const mockApi=async route=>{const req=route.request(),url=new URL(req.url());let body={};
  if(url.pathname==='/internal/auth/status')body={authenticated:false};
  else if(url.pathname==='/internal/jira-reviews/reference-data'){
@@ -231,7 +231,7 @@ if(output)fs.mkdirSync(output,{recursive:true});
  await page.setViewportSize({width:1440,height:1000});
  await page.evaluate(f=>{
    const active=Array.from({length:24},(_,i)=>({...f.data.issues[0],key:`OPEN-${i+1}`,issueId:`open-${i}`,stageCode:['new','confirm','analysis','action','verify'][i%5],stageName:['创建','问题确认','原因分析','措施确认','测试验证'][i%5],maxReachedStageOrder:i%5,status:'Analysis',
-     assignee:`处理人${String(i+1).padStart(2,'0')}（供应商项目团队）`,variantKey:i<12?'ADS':'LIDAR',variantLabel:i<12?'ADS':'LiDAR',severityKey:i%2?'A':'S',severityLabel:i%2?'A级':'S级',
+     assignee:`处理人${String(i+1).padStart(2,'0')}（供应商项目团队）`,categoryItemId:i<12?1:3,variantLabel:i<12?'ADS':'LiDAR',severityKey:i%2?'A':'S',severityLabel:i%2?'A级':'S级',
      closedAt:null,isOnTime:null,closureEvents:[],closureElapsedDays:null,stageOverdueDays:i%2?3:0,closureOverdueDays:i%3?0:4,completedStageDays:i%5>=3?{analysis:8}:{} }));
    jiraBoardState.commentCache.clear();jiraBoardState.analysis=mergeJiraAnalyses([{...f,data:{...f.data,issues:[...f.data.issues,...active]}}],'2026-09-11');
    jiraBoardState.comparison={unit:'month',mode:'mom',from:'2026-07-01',to:'2026-09-11'};renderJiraResults(jiraBoardState.analysis);
@@ -246,7 +246,7 @@ if(output)fs.mkdirSync(output,{recursive:true});
    if(name==='variant'&&output)await page.locator('.jira-detail-modal').screenshot({path:path.join(output,'jira-detail-echarts.png')});
    await page.locator('.jira-detail-close').click();assert.equal(await page.evaluate(()=>jiraCharts.size),12);
  }
- await page.locator('[data-jira-variant-mode="LIDAR"]').click();
+ await page.locator('#jira-category-filter').selectOption('3');
  await page.locator('#jira-ec-variant-assignee').evaluate(node=>echarts.getInstanceByDom(node).dispatchAction({type:'dataZoom',startValue:10,endValue:11}));
  await clickChart('variant-assignee',0,11);await page.locator('.jira-detail-modal').waitFor();
  assert.match(await page.locator('.jira-detail-table-wrap tbody tr').first().innerText(),/OPEN-24/);
@@ -284,5 +284,80 @@ if(output)fs.mkdirSync(output,{recursive:true});
  });
  assert.match(await page.locator('[data-jira-kind="on-time"]').innerText(),/25.0%/);
  assert.match(await page.locator('#jira-closure-comparison').innerText(),/缺少关闭状态操作时间/);
+ // Configurable categories: parent/leaf scope, raw unmapped labels, CSV and PDF.
+ await page.evaluate(f=>{
+   const active=[1,3,4,null,null].map((categoryItemId,i)=>({...f.data.issues[0],key:`CAT-${i}`,issueId:`cat-${i}`,categoryItemId,variantLabel:['ADS','LiDAR','Front camera','New Radar','未填写'][i],stageCode:'analysis',status:'Analysis',closedAt:null,isOnTime:null,closureEvents:[]}));
+   jiraBoardState.categoryId='';jiraBoardState.commentCache.clear();jiraBoardState.analysis=mergeJiraAnalyses([{...f,data:{...f.data,issues:active}}],'2026-09-11');renderJiraResults(jiraBoardState.analysis);
+ },fixture);
+ const pieData=()=>page.locator('#jira-ec-variant').evaluate(node=>echarts.getInstanceByDom(node).getOption().series[0].data.map(x=>[x.name,x.value]));
+ assert.deepEqual(await pieData(),[['ADS',1],['传感器',2],['未分类',2]]);
+ await clickChart('variant',0,1);await page.locator('.jira-detail-modal').waitFor();
+ assert.equal(await page.locator('.jira-detail-table-wrap tbody tr').count(),2);
+ await page.locator('#jira-detail-category').selectOption('4');
+ assert.equal(await page.locator('.jira-detail-table-wrap tbody tr').count(),1);
+ assert.match(await page.locator('.jira-detail-table-wrap').innerText(),/传感器 \/ 摄像头/);
+ const categoryDownload=page.waitForEvent('download');await page.locator('[data-jira-export]').click();
+ const categoryCsvDownload=await categoryDownload,categoryChunks=[];
+ for await(const chunk of await categoryCsvDownload.createReadStream())categoryChunks.push(chunk);
+ const categoryCsv=Buffer.concat(categoryChunks).toString('utf8');
+ assert.match(categoryCsv,/问题分类/);assert.match(categoryCsv,/JIRA原始选项/);assert.match(categoryCsv,/Front camera/);assert.doesNotMatch(categoryCsv,/LiDAR/);
+ await page.locator('.jira-detail-close').click();
+ await page.locator('#jira-category-filter').selectOption('2');
+ assert.deepEqual(await pieData(),[['激光雷达',1],['摄像头',1]]);
+ await clickChart('variant-assignee',0,0);await page.locator('.jira-detail-modal').waitFor();assert.equal(await page.locator('.jira-detail-table-wrap tbody tr').count(),2);await page.locator('.jira-detail-close').click();
+ await page.locator('#jira-category-filter').selectOption('unmapped');
+ assert.equal((await pieData()).length,2);assert.ok((await pieData()).some(x=>x[0]==='New Radar'));
+ await page.locator('#jira-category-filter').selectOption('3');assert.deepEqual(await pieData(),[['激光雷达',1]]);
+ for(const width of [390,1440]){
+   await page.setViewportSize({width,height:1000});await page.waitForTimeout(100);
+   const overflow=await page.locator('.jira-variant-panel').evaluate(el=>({width:el.clientWidth,scroll:el.scrollWidth,select:el.querySelector('select').getBoundingClientRect().right,right:el.getBoundingClientRect().right}));
+   assert.ok(overflow.scroll<=overflow.width+1&&overflow.select<=overflow.right,JSON.stringify(overflow));
+   if(output)await page.locator('.jira-variant-panel').screenshot({path:path.join(output,`jira-categories-${width}.png`)});
+ }
+ await page.waitForFunction(()=>jiraBoardState.pdfReady);
+ await page.unroute('**/internal/**',mockApi);
+ await page.evaluate(()=>{const original=window.open;window.open=function(...args){const popup=original.apply(this,args);popup.print=()=>{popup.__printCalled=true;};popup.close=()=>{popup.__closeRequested=true;};window.open=original;return popup;};});
+ const categoryPopupPromise=page.waitForEvent('popup');await page.locator('#jira-export-pdf').click();const categoryPdf=await categoryPopupPromise;
+ await categoryPdf.waitForFunction(()=>window.__printCalled===true);
+ assert.equal(await categoryPdf.locator('#jira-category-filter').inputValue(),'3');
+ assert.match(await categoryPdf.locator('.jira-variant-panel').innerText(),/激光雷达/);
+ assert.equal(await categoryPdf.locator('.jira-variant-panel svg').count(),2);
+ await categoryPdf.close();await page.route('**/internal/**',mockApi);
+ // Dictionary editor CRUD and field/option mapping payloads using mock persistence.
+ const dictionary={id:150,code:'JIRA_ISSUE_CATEGORY',name:'JIRA问题分类',scopeMode:'NONE',structureMode:'TREE',isSystem:true,isEnabled:true,sortOrder:150};
+ let dictItems=[{id:201,value:'SENSOR',name:'传感器',parentItemId:null,sortOrder:10,childCount:0,usageCount:0,jiraMappings:[]}],dictPayloads=[];
+ await page.route('**/internal/master-data/dictionaries**',async route=>{
+   const req=route.request(),url=new URL(req.url());let body={};
+   if(req.method()==='GET')body=url.pathname.endsWith('/dictionaries')?{items:[{...dictionary,itemCount:dictItems.length}],scopeOptions:{deliverableTypes:[]}}:{dictionary,items:dictItems};
+   else if(req.method()==='POST'||req.method()==='PUT'){
+     const p=req.postDataJSON();dictPayloads.push(p);const id=req.method()==='POST'?202:Number(url.pathname.split('/').at(-1));
+     const value={id,value:p.itemCode,name:p.itemName,parentItemId:p.parentItemId,sortOrder:p.sortOrder,description:p.description,jiraMappings:p.jiraMappings,childCount:0,usageCount:0};
+     dictItems=dictItems.filter(x=>x.id!==id);dictItems.push(value);body={id};
+   }else if(req.method()==='DELETE'){dictItems=dictItems.filter(x=>x.id!==Number(url.pathname.split('/').at(-1)));}
+   await route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
+ });
+ await page.evaluate(()=>{state.route='dictionaries';state.auth.user.permissions=['DICTIONARY_VIEW','DICTIONARY_CREATE','DICTIONARY_EDIT','DICTIONARY_DELETE'];dictionaryManagementState.filters={keyword:'',type:'',structure:'',status:''};return renderDictionaryManagement();});
+ await page.locator('.dictionary-item-child').click();
+ assert.equal(await page.locator('[name="parentItemId"]').inputValue(),'201');
+ await page.locator('[name="itemCode"]').fill('CAMERA');await page.locator('[name="itemName"]').fill('摄像头');
+ await page.locator('#jira-mapping-add').click();await page.locator('[data-mapping-value]').fill('Front camera');
+ await page.locator('#jira-mapping-add').click();const idRow=page.locator('.jira-mapping-row').nth(1);
+ await idRow.locator('[data-mapping-type]').selectOption('ID');assert.equal(await idRow.locator('[data-mapping-field]').getAttribute('required'),'');
+ await idRow.locator('[data-mapping-field]').fill('customfield_101');await idRow.locator('[data-mapping-value]').fill('12345');
+ for(const width of [390,1440]){
+   await page.setViewportSize({width,height:1000});const sizes=await page.locator('#dictionary-item-form').evaluate(el=>({width:el.clientWidth,scroll:el.scrollWidth}));assert.ok(sizes.scroll<=sizes.width+1,JSON.stringify(sizes));
+   if(output)await page.locator('.modal').screenshot({path:path.join(output,`jira-category-editor-${width}.png`)});
+ }
+ await page.locator('.modal-submit').click();await page.waitForFunction(()=>!document.querySelector('#dictionary-item-form'));
+ assert.equal(dictPayloads.at(-1).jiraMappings.length,2);assert.equal(dictPayloads.at(-1).jiraMappings[1].matchValue,'12345');
+ await page.locator('.dictionary-item-edit[data-id="202"]').click();assert.equal(await page.locator('.jira-mapping-row').count(),2);
+ await page.locator('[name="itemName"]').fill('前视摄像头');await page.locator('.jira-mapping-row').first().locator('button').click();
+ await page.locator('.modal-submit').click();await page.waitForFunction(()=>!document.querySelector('#dictionary-item-form'));
+ assert.equal(dictPayloads.at(-1).jiraMappings.length,1);assert.equal(dictPayloads.at(-1).itemName,'前视摄像头');
+ await page.locator('.dictionary-item-delete[data-id="202"]').click();await page.locator('.modal-submit').click();await page.waitForFunction(()=>!document.querySelector('.dictionary-item-edit[data-id="202"]'));
+ await page.evaluate(()=>{state.auth.user.permissions=['DICTIONARY_VIEW'];return renderDictionaryManagement();});
+ assert.equal(await page.locator('.dictionary-item-edit,.dictionary-item-delete,#new-dictionary-item').count(),0);
+ console.log('PASS: category hierarchy, parent/leaf/unmapped charts, detail filtering, CSV/PDF, responsive editor, mapping create/edit/delete and readonly UI (mock API).');
+
  assert.deepEqual(errors,[]);console.log('PASS: full application scripts/styles; review CRUD, slow/error/retry/cancel/save failure, readonly permissions; standard/compact/closed drilldowns with 121 rows at five viewport sizes; chart entry points; combo chart axes, period bars, data drilldowns, week/month/year, native ECharts events, zoom, resize, lifecycle and PDF layout; zero uncaught JS errors (mock API).');}finally{await browser.close();server.close();}
 })().catch(e=>{console.error(e);process.exit(1)});
