@@ -255,34 +255,6 @@ public sealed partial class JiraBoardService
             .ThenBy(x => x.severity)
             .ToArray();
 
-        var stageAverages = Stages.Where(x => x.Code != "closed").Select(stage =>
-        {
-            var samples = issues.Where(x => x.CompletedStageDays.ContainsKey(stage.Code))
-                .Select(x => x.CompletedStageDays[stage.Code])
-                .Where(x => x >= 0)
-                .ToArray();
-            return new
-            {
-                code = stage.Code,
-                name = stage.Name,
-                sampleCount = samples.Length,
-                averageDays = Average(samples)
-            };
-        }).ToArray();
-
-        var severityAverages = issues.Where(x => x.StageCode == "closed" && x.TimingReliable && x.ClosedAt.HasValue)
-            .GroupBy(x => x.SeverityLabel, StringComparer.OrdinalIgnoreCase)
-            .Select(group => new
-            {
-                severity = group.Key,
-                severityKey = group.Select(x => x.SeverityKey).FirstOrDefault() ?? "UNKNOWN",
-                sampleCount = group.Count(),
-                averageDays = Average(group.Select(x => (x.ClosedAt!.Value - x.CreatedAt).TotalDays).Where(x => x >= 0))
-            })
-            .OrderByDescending(x => x.averageDays ?? -1)
-            .ThenBy(x => SeverityOrder(x.severityKey))
-            .ToArray();
-
         var unmatchedStatuses = issues.Where(x => x.StageCode == "other")
             .GroupBy(x => x.Status, StringComparer.OrdinalIgnoreCase)
             .Select(x => new { status = x.Key, count = x.Count() })
@@ -325,8 +297,6 @@ public sealed partial class JiraBoardService
             funnel,
             overdue,
             closureRates,
-            stageAverages,
-            severityAverages,
             unmatchedStatuses,
             unmatchedSeverities,
             categories = categories.Select(x => new { x.Id, x.Name, x.ParentItemId, x.SortOrder }).ToArray(),

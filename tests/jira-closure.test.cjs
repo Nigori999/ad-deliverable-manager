@@ -165,10 +165,10 @@ test('ECharts组合图保留零值和空值，变化折线使用独立轴且不�
   assert.equal(run("jiraComparisonOption(chartRows,'rate','yoy',520).series[0].name"),'去年同期');
 });
 
-test('窄卡片通过内部范围缩放展示，PDF过滤窗口外数据并使用全量范围的统一轴刻度',()=>{
+test('窄卡片通过内部范围缩放展示，PDF单图完整保留当前查询周期',()=>{
   const narrow=run("jiraComparisonOption(chartRows,'rate','mom',300)");
   assert.equal(narrow.dataZoom[0].endValue,2);
-  const print=run("jiraComparisonOption(chartRows,'rate','mom',600,1,true)");
-  assert.equal(print.dataZoom[0].show,false);assert.equal(print.dataZoom[0].filterMode,'filter');
-  assert.equal(print.dataZoom[0].startValue,1);assert.equal(print.series[0].data.length,3);
+  const print=run("jiraComparisonOption(chartRows,'rate','mom',600,true)");
+  assert.equal(print.dataZoom.length,0);assert.equal(print.series[0].data.length,3);
+  assert.deepEqual(Array.from(print.xAxis.data),Array.from(context.chartRows,row=>row.label));
 });

@@ -84,7 +84,7 @@ if(output)fs.mkdirSync(output,{recursive:true});
    },{seriesIndex,dataIndex});
    if(hover)await page.mouse.move(point.x,point.y);else await page.mouse.click(point.x,point.y);
  };
- assert.equal(await page.locator('#jira-board-results [data-jira-chart]').count(),12);
+ assert.equal(await page.locator('#jira-board-results [data-jira-chart]').count(),11);
  for(const [seriesIndex,key] of [[0,'AD-13'],[1,'AD-7']]){
    await clickChart('compare-rate',seriesIndex,1);
    await page.locator('.jira-detail-modal').waitFor();
@@ -104,27 +104,39 @@ if(output)fs.mkdirSync(output,{recursive:true});
  assert.equal(yearly.series[0].name,'去年同期');assert.ok(yearly.series[0].data.every(x=>x.value===null));
  assert.ok(yearly.series[2].data.every(x=>x===null));
  await page.locator('[data-compare="mode"]').selectOption('mom');await page.locator('[data-compare-apply]').click();
- // Export a long range through the actual PDF window: four periods per SVG, shared axes, two columns.
+ // Export a long range through the actual PDF window: one SVG per chart, all query periods, two columns.
  await page.locator('[data-compare="from"]').fill('2025-06-01');await page.locator('[data-compare-apply]').click();
  await page.evaluate(()=>{
    const original=window.open;
    window.open=function(...args){const popup=original.apply(this,args);popup.print=()=>{popup.__printCalled=true;};popup.close=()=>{popup.__closeRequested=true;};window.open=original;return popup;};
    setJiraPdfReady(true);
  });
+ await page.locator('[data-compare="from"]').fill('2026-08-01'); // Leave unapplied edits outside the exported result.
  // Avoid Chromium single-process interception stalling document.open() popup stylesheet requests.
  await page.unroute('**/internal/**',mockApi);
  const popupPromise=page.waitForEvent('popup');await page.locator('#jira-export-pdf').click();const pdfPage=await popupPromise;
  await pdfPage.bringToFront();
  await pdfPage.waitForFunction(()=>window.__printCalled===true);
- assert.equal(await pdfPage.locator('.jira-compare-card').first().locator('svg').count(),4);
+ assert.equal(await pdfPage.locator('.jira-compare-card').first().locator('svg').count(),1);
  assert.equal(await pdfPage.locator('.jira-chart-data').count(),0);
+ assert.equal(await pdfPage.locator('[data-compare="from"]').inputValue(),'2025-06-01');
+ assert.equal(await pdfPage.locator('#jira-ec-trend>svg').count(),1);
+ const exported=await pdfPage.locator('[data-jira-chart]').evaluateAll(nodes=>nodes.map(node=>({name:node.dataset.jiraChart,count:node.querySelectorAll('svg').length})));
+ assert.ok(exported.every(x=>x.count===1),JSON.stringify(exported));
+ assert.equal(exported.length,await page.locator('#jira-board-results [data-jira-chart]').count());
+ const exportedLabels=await pdfPage.locator('#jira-ec-compare-rate svg').textContent();
+ assert.match(exportedLabels,/2025-06/);assert.match(exportedLabels,/2026-09/);
+
  const printLayout=await pdfPage.locator('.jira-compare-grid').evaluate(grid=>{
    const cards=[...grid.children].map(card=>card.getBoundingClientRect());
    return {sameRow:cards[0].top===cards[1].top,overlap:cards[0].right>cards[1].left,
      fits:[...grid.querySelectorAll('.jira-echart>svg')].every(svg=>svg.getBoundingClientRect().width<=svg.parentElement.clientWidth+1)};
  });
  assert.deepEqual(printLayout,{sameRow:true,overlap:false,fits:true});
- if(output){await pdfPage.locator('#jira-closure-comparison').screenshot({path:path.join(output,'jira-charts-pdf.png')});await pdfPage.pdf({path:path.join(output,'jira-board.pdf'),preferCSSPageSize:true,printBackground:true});}
+ const pdfBytes=await pdfPage.pdf({preferCSSPageSize:true,printBackground:true});
+ const pdfInfo=require('node:child_process').execFileSync('pdfinfo',['-'],{input:pdfBytes}).toString();
+ assert.match(pdfInfo,/Pages:\s+1\b/);
+ if(output){await pdfPage.locator('.jira-duration-panel').screenshot({path:path.join(output,'jira-duration-pdf.png')});await pdfPage.locator('#jira-closure-comparison').screenshot({path:path.join(output,'jira-charts-pdf.png')});await pdfPage.pdf({path:path.join(output,'jira-board.pdf'),preferCSSPageSize:true,printBackground:true});}
  await pdfPage.close();
  await page.route('**/internal/**',mockApi);
  await page.locator('[data-compare="from"]').fill('2026-07-01');await page.locator('[data-compare-apply]').click();
@@ -199,7 +211,7 @@ if(output)fs.mkdirSync(output,{recursive:true});
  await page.setViewportSize({width:1440,height:900});
  await page.evaluate(()=>{content.innerHTML='<div id="jira-board-results"></div>';renderJiraResults(jiraBoardState.analysis);});
  // Exercise every chart's shared keyboard-accessible data/drilldown entry, including zero bars.
- for(const name of ['funnel','overdue','trend','variant','variant-assignee','closure-total','closure-severity','duration-severity','duration-stage','compare-rate','compare-days']){
+ for(const name of ['funnel','overdue','trend','variant','variant-assignee','closure-total','closure-severity','duration-analysis','compare-rate','compare-days']){
    const wrapper=page.locator(`#jira-ec-${name}`).locator('..');
    const button=wrapper.locator('[data-chart-row]').first();if(!await button.count())continue;
    await wrapper.locator('summary').click();await button.focus();await button.press('Enter');
@@ -237,14 +249,14 @@ if(output)fs.mkdirSync(output,{recursive:true});
    jiraBoardState.comparison={unit:'month',mode:'mom',from:'2026-07-01',to:'2026-09-11'};renderJiraResults(jiraBoardState.analysis);
  },fixture);
  await page.waitForFunction(()=>jiraBoardState.pdfReady);
- assert.equal(await page.evaluate(()=>jiraCharts.size),12);
+ assert.equal(await page.evaluate(()=>jiraCharts.size),11);
  if(output)await page.locator('#jira-board-results').screenshot({path:path.join(output,'jira-dashboard.png')});
- for(const [name,series,index,count] of [['funnel',0,2,32],['trend',1,79,1],['duration-stage',0,2,27],['overdue',0,2,2],['variant',0,0,12],['variant-assignee',0,0,1],['closure-total',0,0,18],['closure-severity',0,0,21],['duration-severity',0,0,9],['followup',0,0,12]]){
+ for(const [name,series,index,count] of [['funnel',0,2,32],['trend',1,79,1],['duration-analysis',2,2,18],['overdue',0,2,2],['variant',0,0,12],['variant-assignee',0,0,1],['closure-total',0,0,18],['closure-severity',0,0,21],['duration-analysis',1,0,9],['followup',0,0,12]]){
    await clickChart(name,series,index);await page.locator('.jira-detail-modal').waitFor({timeout:5000});
    assert.equal(await page.locator('.jira-detail-table-wrap tbody tr').count(),count,name);
-   assert.equal(await page.evaluate(()=>jiraCharts.size),14);
+   assert.equal(await page.evaluate(()=>jiraCharts.size),13);
    if(name==='variant'&&output)await page.locator('.jira-detail-modal').screenshot({path:path.join(output,'jira-detail-echarts.png')});
-   await page.locator('.jira-detail-close').click();assert.equal(await page.evaluate(()=>jiraCharts.size),12);
+   await page.locator('.jira-detail-close').click();assert.equal(await page.evaluate(()=>jiraCharts.size),11);
  }
  await page.locator('#jira-category-filter').selectOption('3');
  await page.locator('#jira-ec-variant-assignee').evaluate(node=>echarts.getInstanceByDom(node).dispatchAction({type:'dataZoom',startValue:10,endValue:11}));
@@ -253,10 +265,10 @@ if(output)fs.mkdirSync(output,{recursive:true});
  await page.locator('.jira-detail-close').click();
  // Repeated partial redraws and route removal release instances instead of retaining detached DOM.
  for(let i=0;i<3;i++){await page.locator('[data-jira-overdue-sort="count"]').click();await page.locator('[data-compare-apply]').click();}
- assert.equal(await page.evaluate(()=>jiraCharts.size),12);
+ assert.equal(await page.evaluate(()=>jiraCharts.size),11);
  await page.locator('[data-jira-kind="all"]').click();await page.locator('#jira-detail-search').fill('OPEN-24');
  assert.equal(await page.locator('#jira-ec-detail-severity').evaluate(node=>echarts.getInstanceByDom(node).getOption().series[0].data.reduce((sum,x)=>sum+x.value,0)),1);
- await page.locator('#jira-detail-search').fill('not-present');assert.equal(await page.evaluate(()=>jiraCharts.size),12);
+ await page.locator('#jira-detail-search').fill('not-present');assert.equal(await page.evaluate(()=>jiraCharts.size),11);
  await page.locator('.jira-detail-close').click();
  await page.evaluate(()=>{content.replaceChildren();});await page.waitForFunction(()=>jiraCharts.size===0);
  await page.evaluate(f=>{content.innerHTML='<div id="jira-board-results"></div>';jiraBoardState.analysis=mergeJiraAnalyses([f],'2026-09-11');renderJiraResults(jiraBoardState.analysis);},fixture);
@@ -323,6 +335,36 @@ if(output)fs.mkdirSync(output,{recursive:true});
  assert.match(await categoryPdf.locator('.jira-variant-panel').innerText(),/激光雷达/);
  assert.equal(await categoryPdf.locator('.jira-variant-panel svg').count(),2);
  await categoryPdf.close();await page.route('**/internal/**',mockApi);
+ // Full-width duration analysis: three independent lines share one scale and exact samples.
+ await page.evaluate(f=>{
+   state.auth.user.permissions=['JIRA_BOARD_VIEW'];state.route='jira-board';
+   const categories=[...f.data.categories,{id:5,name:'毫米波雷达',parentItemId:2,sortOrder:10}];
+   const issues=Array.from({length:8},(_,i)=>({...f.data.issues[0],key:`DURATION-${i}`,issueId:`duration-${i}`,categoryItemId:[1,3,4,5][i%4],severityKey:['S','A','B','C'][i%4],severityLabel:['S级','A级','B级','C级'][i%4],closureElapsedDays:8+i,completedStageDays:{new:.5,confirm:1,analysis:2+i/4,action:3,verify:1.5}}));
+   issues.push({...issues[0],key:'DURATION-OPEN',stageCode:'analysis',closureElapsedDays:200,completedStageDays:{analysis:100}});
+   jiraBoardState.analysis=mergeJiraAnalyses([{...f,data:{...f.data,categories,issues}}],'2026-09-11');content.innerHTML='<div id="jira-board-results"></div>';jiraBoardState.categoryId='';jiraBoardState.comparison={unit:'month',mode:'mom',from:'2026-07-01',to:'2026-09-11'};renderJiraResults(jiraBoardState.analysis);
+ },fixture);
+ const combined=await page.locator('#jira-ec-duration-analysis').evaluate(node=>{const o=echarts.getInstanceByDom(node).getOption();return {types:o.series.map(x=>x.type),grids:o.grid.length,axes:o.yAxis.map(x=>[x.min,x.max,x.interval]),category:o.xAxis[0].data,stage:o.series[2].data};});
+ assert.deepEqual(combined.types,['line','line','line']);assert.equal(combined.grids,3);assert.ok(combined.axes.every(x=>JSON.stringify(x)===JSON.stringify(combined.axes[0])));
+ assert.deepEqual(combined.category,['ADS','毫米波雷达','激光雷达','摄像头']);assert.equal(combined.stage[2],2.875);
+ for(const [series,index,count] of [[0,0,2],[1,1,2],[2,2,8]]){
+   await clickChart('duration-analysis',series,index);await page.locator('.jira-detail-modal').waitFor();
+   assert.equal(await page.locator('.jira-detail-table-wrap tbody tr').count(),count);
+   assert.match(await page.locator('.jira-detail-table-wrap thead').innerText(),/本次统计耗时/);assert.doesNotMatch(await page.locator('.jira-detail-table-wrap').innerText(),/DURATION-OPEN/);
+   if(series===2){
+     const downloadPromise=page.waitForEvent('download');await page.locator('[data-jira-export]').click();const d=await downloadPromise,parts=[];for await(const chunk of await d.createReadStream())parts.push(chunk);
+     const csv=Buffer.concat(parts).toString('utf8');assert.equal(csv.split('\r\n').length,9);assert.match(csv,/本次统计耗时/);assert.doesNotMatch(csv,/DURATION-OPEN/);assert.match(csv,/"2.25"/);
+   }
+   await page.locator('.jira-detail-close').click();
+ }
+ for(const width of [1440,1024,390]){
+   await page.setViewportSize({width,height:900});await page.locator('.jira-duration-panel').scrollIntoViewIfNeeded();
+   const sizes=await page.locator('.jira-duration-panel').evaluate(node=>({width:node.clientWidth,board:document.querySelector('#jira-board-results').clientWidth,pageWidth:document.documentElement.clientWidth,pageScroll:document.documentElement.scrollWidth,scroll:node.querySelector('.jira-duration-scroll').scrollWidth,view:node.querySelector('.jira-duration-scroll').clientWidth}));
+   assert.ok(Math.abs(sizes.width-sizes.board)<=2);assert.ok(sizes.pageScroll<=sizes.pageWidth+1,JSON.stringify(sizes));if(width===1440)assert.ok(sizes.scroll<=sizes.view+1,JSON.stringify(sizes));
+   if(output)await page.locator('.jira-duration-panel').screenshot({path:path.join(output,`jira-duration-${width}.png`)});
+ }
+ await page.setViewportSize({width:1440,height:900});
+ console.log('PASS: combined duration lines, dictionary leaves, closed-only stage samples, native point drilldowns/CSV, full-row layout and responsive containment.');
+
  // Dictionary editor CRUD and field/option mapping payloads using mock persistence.
  const dictionary={id:150,code:'JIRA_ISSUE_CATEGORY',name:'JIRA问题分类',scopeMode:'NONE',structureMode:'TREE',isSystem:true,isEnabled:true,sortOrder:150};
  let dictItems=[{id:201,value:'SENSOR',name:'传感器',parentItemId:null,sortOrder:10,childCount:0,usageCount:0,jiraMappings:[]}],dictPayloads=[];

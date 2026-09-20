@@ -126,7 +126,7 @@ function jiraComparisonTooltip(row,metric,mode) {
   return `${row.label}${row.partial?'（未结束周期，按相同进度对比）':''}\n${describe(row.base,baseName)}\n${describe(row.current,'当期')}\n变化：${jiraComparisonChangeText(row,metric)}`;
 }
 
-function jiraComparisonOption(rows,metric,mode,width,start=null,print=false) {
+function jiraComparisonOption(rows,metric,mode,width,print=false) {
   const rate=metric==='rate',baseName=mode==='yoy'?'去年同期':'上一周期';
   const changeName=rate?'按期率变化（百分点）':'平均周期变化率（%）';
   const changes=rows.map(row=>jiraComparisonChange(row,metric));
@@ -135,14 +135,14 @@ function jiraComparisonOption(rows,metric,mode,width,start=null,print=false) {
   return {...option,legend:{...option.legend,type:'plain',left:'center',itemWidth:16,itemHeight:8,itemGap:10,data:[baseName,'当期',changeName]},
     grid:{left:8,right:12,top:76,bottom:48,containLabel:true},
     tooltip:{...option.tooltip,trigger:'axis',axisPointer:{type:'shadow'},formatter:params=>esc(jiraComparisonTooltip(rows[params[0].dataIndex],metric,mode)).replace(/\n/g,'<br>')},
-    xAxis:{type:'category',data:rows.map(row=>row.label+(row.partial?'*':'')),axisLabel:{hideOverlap:true,fontSize:11},axisTick:{alignWithLabel:true}},
+    xAxis:{type:'category',data:rows.map(row=>row.label+(row.partial?'*':'')),axisLabel:{hideOverlap:true,showMinLabel:true,showMaxLabel:true,fontSize:11},axisTick:{alignWithLabel:true}},
     yAxis:[{type:'value',name:rate?'按期率（%）':'平均周期（天）',min:0,max:rate?100:jiraChartMaximum(rows.flatMap(row=>[row.base.days,row.current.days])),axisLabel:{fontSize:11},splitLine:{lineStyle:{color:'#eaf0f6'}}},
       {type:'value',name:rate?'变化（百分点）':'变化率（%）',min:low===high?-1:low<0?-jiraChartMaximum(changes.filter(Number.isFinite).map(value=>-value)):0,max:low===high?1:high>0?jiraChartMaximum(changes):0,axisLabel:{fontSize:11,color:'#ad620e',formatter:value=>`${value>0?'+':''}${value}`},splitLine:{show:false}}],
-    dataZoom:jiraChartZoom(rows.length,print?4:Math.max(1,Math.min(6,Math.floor((width-110)/100))),'x',start,print),
+    dataZoom:print?[]:jiraChartZoom(rows.length,Math.max(1,Math.min(6,Math.floor((width-110)/100))),'x'),
     series:[...['base','current'].map((kind,seriesIndex)=>({name:seriesIndex?'当期':baseName,type:'bar',barMaxWidth:28,barMinHeight:2,clip:true,
-      itemStyle:{color:seriesIndex?'#3b5ccc':'#a8b3c4',borderRadius:[3,3,0,0]},label:{show:true,position:'top',fontSize:11,color:'#43536d',formatter:p=>Number.isFinite(p.value)?p.value.toFixed(1):'—'},
+      itemStyle:{color:seriesIndex?'#3b5ccc':'#a8b3c4',borderRadius:[3,3,0,0]},label:{show:!print||rows.length<=6,position:'top',fontSize:11,color:'#43536d',formatter:p=>Number.isFinite(p.value)?p.value.toFixed(1):'—'},
       data:rows.map((row,itemIndex)=>({value:row[kind][metric],itemIndex}))})),
-      {name:changeName,type:'line',yAxisIndex:1,symbolSize:7,connectNulls:false,clip:true,itemStyle:{color:'#d97706'},lineStyle:{width:2},data:changes,
+      {name:changeName,type:'line',yAxisIndex:1,showSymbol:!print||rows.length<=12,symbolSize:7,connectNulls:false,clip:true,itemStyle:{color:'#d97706'},lineStyle:{width:2},data:changes,
         markLine:{silent:true,symbol:'none',label:{show:true,formatter:'变化为0',position:'insideEndTop',fontSize:10},lineStyle:{type:'dashed',color:'#d97706',opacity:.65},data:[{yAxis:0}]}}]};
 }
 
@@ -165,7 +165,7 @@ function mountJiraClosureComparisons(rows,mode) {
     onClick:p=>{if(p.seriesIndex>1)return;const sample=rows[p.dataIndex][p.seriesIndex===0?'base':'current'];
       if(!Number.isFinite(sample[metric]))return;
       openJiraDetails(`${p.seriesIndex===1?'当期':mode==='yoy'?'去年同期':'上一周期'} ${jiraComparisonRangeText(sample)} · 已关闭问题（按周期末状态）`,sample.issues,'closure');},
-    exportOptions:width=>Array.from({length:Math.ceil(rows.length/4)},(_,index)=>({width,height:340,option:jiraComparisonOption(rows,metric,mode,width,index*4,true)}))
+    exportOption:width=>({width,height:340,option:jiraComparisonOption(rows,metric,mode,width,true)})
   });
 }
 

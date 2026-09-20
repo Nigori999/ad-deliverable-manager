@@ -43,22 +43,22 @@ function jiraChartMaximum(values) {
   return [1,2,5,10].find(step=>step*magnitude>=maximum)*magnitude;
 }
 
-function jiraChartZoom(count,visible=10,axis='x',start=null,print=false) {
-  if(count===0||(count<=visible&&!print))return [];
+function jiraChartZoom(count,visible=10,axis='x',start=null) {
+  if(count===0||count<=visible)return [];
   start=start??(axis==='x'?Math.max(0,count-visible):0);
   const axisIndex=axis==='x'?{xAxisIndex:0}:{yAxisIndex:0};
   const common={...axisIndex,filterMode:'filter',startValue:start,endValue:Math.min(count-1,start+visible-1)};
-  return [{id:'range',type:'slider',...common,show:!print,height:axis==='x'?18:undefined,width:axis==='y'?14:undefined,bottom:axis==='x'?4:undefined,right:axis==='y'?0:undefined,showDetail:false,brushSelect:false},
-    {id:'inside-range',type:'inside',...common,disabled:print,zoomOnMouseWheel:false,moveOnMouseWheel:false}];
+  return [{id:'range',type:'slider',...common,height:axis==='x'?18:undefined,width:axis==='y'?14:undefined,bottom:axis==='x'?4:undefined,right:axis==='y'?0:undefined,showDetail:false,brushSelect:false},
+    {id:'inside-range',type:'inside',...common,zoomOnMouseWheel:false,moveOnMouseWheel:false}];
 }
 
-function jiraMountChart(name,{title,options,rows=[],onClick=null,exportOptions=null}) {
+function jiraMountChart(name,{title,options,rows=[],onClick=null,exportOption=null}) {
   const node=byId(`jira-ec-${name}`);if(!node)return;
   disposeJiraCharts(node);
   // Hidden mobile breakdowns receive their actual size when they become visible.
   const width=node.clientWidth||320;
   const chart=echarts.init(node,null,{renderer:'svg',width,height:node.clientHeight||240});
-  const entry={chart,options,rows,onClick,exportOptions,width,height:node.clientHeight||240};jiraCharts.set(node,entry);
+  const entry={chart,options,rows,onClick,exportOption,width,height:node.clientHeight||240};jiraCharts.set(node,entry);
   chart.setOption(options(width),{notMerge:true});
   if(onClick)chart.on('click',params=>{if(params.componentType==='series'){chart.dispatchAction({type:'hideTip'});onClick(params);}});
   const body=node.parentElement.querySelector('.jira-chart-data-body');
@@ -78,7 +78,7 @@ function jiraBarOption(items,{title,unit='项',max=null,visible=10,print=false}=
     tooltip:{...option.tooltip,trigger:'axis',axisPointer:{type:'shadow'},formatter:params=>{const item=items[params[0].dataIndex];return `${esc(item.name)}<br><b>${esc(Number.isFinite(item.value)?item.value.toFixed(unit==='项'?0:1)+unit:'—')}</b>${item.detail?'<br>'+esc(item.detail):''}`;}},
     xAxis:{type:'value',min:0,max:max||jiraChartMaximum(items.map(item=>item.value)),minInterval:unit==='项'?1:undefined,name:unit,nameTextStyle:{padding:[0,0,0,-14]},splitLine:{lineStyle:{color:'#eaf0f6'}}},
     yAxis:{type:'category',inverse:true,data:items.map(item=>item.name),axisLine:{show:false},axisTick:{show:false},axisLabel:{width:112,overflow:'truncate',fontSize:11}},
-    dataZoom:jiraChartZoom(items.length,visible,'y',0,print),
+    dataZoom:print?[]:jiraChartZoom(items.length,visible,'y',0),
     series:[{name:title,type:'bar',barMaxWidth:18,barMinHeight:2,clip:true,label:{show:true,position:'right',color:'#43536d',fontSize:11,formatter:p=>Number.isFinite(p.value)?p.value.toFixed(unit==='项'?0:1):'—'},
       data:items.map((item,index)=>({value:item.value,itemIndex:index,itemStyle:{color:item.color||jiraChartColors[0],borderRadius:[0,3,3,0]}}))}]};
 }
@@ -86,7 +86,7 @@ function jiraBarOption(items,{title,unit='项',max=null,visible=10,print=false}=
 function jiraMountBars(name,items,{title,unit='项',max=null,visible=10,onClick=null}={}) {
   return jiraMountChart(name,{title,options:()=>jiraBarOption(items,{title,unit,max,visible}),
     rows:items.map((item,dataIndex)=>({name:item.name,value:Number.isFinite(item.value)?item.value.toFixed(unit==='项'?0:1)+unit:'—',detail:item.detail,dataIndex,clickable:Number.isFinite(item.value)})),onClick,
-    exportOptions:width=>[{width,height:Math.max(190,items.length*30+65),option:jiraBarOption(items,{title,unit,max,visible:items.length,print:true})}]});
+    exportOption:width=>({width,height:Math.max(190,items.length*30+65),option:jiraBarOption(items,{title,unit,max,visible:items.length,print:true})})});
 }
 
 function jiraPieOption(items,title,centerText,width) {
@@ -107,15 +107,15 @@ function renderJiraTrend(data) {
   const host=byId('jira-trend-chart');if(!host)return;
   disposeJiraCharts(host);host.innerHTML=jiraChartSlot('trend','问题新增与关闭趋势',320);
   const buckets=jiraTrendBuckets(data,jiraBoardState.trendRange);jiraBoardState.trendBuckets=buckets;
-  const make=(width,start=null,print=false)=>{
+  const make=(width,print=false)=>{
     const option=jiraChartBase('问题新增与关闭趋势');
     return {...option,legend:{...option.legend,selected:{新增问题:jiraBoardState.trendVisible.created,关闭问题:jiraBoardState.trendVisible.closed}},
       tooltip:{...option.tooltip,trigger:'axis',formatter:params=>{const b=buckets[params[0].dataIndex];return `${esc(b.start)} ~ ${esc(b.end)}<br>新增 ${b.created} · 关闭 ${b.closed} · 净增 ${b.created-b.closed}`;}},
       grid:{left:12,right:24,top:42,bottom:46,containLabel:true},
-      xAxis:{type:'category',data:buckets.map(b=>b.label),axisLabel:{hideOverlap:true,fontSize:11},axisTick:{alignWithLabel:true}},
+      xAxis:{type:'category',data:buckets.map(b=>b.label),axisLabel:{hideOverlap:true,showMinLabel:true,showMaxLabel:true,fontSize:11},axisTick:{alignWithLabel:true}},
       yAxis:{type:'value',min:0,max:jiraChartMaximum(buckets.flatMap(b=>[b.created,b.closed])),minInterval:1,name:'问题数',splitLine:{lineStyle:{color:'#eaf0f6'}}},
-      dataZoom:jiraChartZoom(buckets.length,print?12:width<600?10:30,'x',start,print),
-      series:['created','closed'].map((kind,index)=>({name:index?'关闭问题':'新增问题',type:'line',showSymbol:true,symbolSize:7,connectNulls:false,clip:true,itemStyle:{color:jiraChartColors[index]},
+      dataZoom:print?[]:jiraChartZoom(buckets.length,width<600?10:30,'x'),
+      series:['created','closed'].map((kind,index)=>({name:index?'关闭问题':'新增问题',type:'line',showSymbol:!print||buckets.length<=30,symbolSize:7,connectNulls:false,clip:true,itemStyle:{color:jiraChartColors[index]},
         data:buckets.map((b,itemIndex)=>({value:b[kind],itemIndex})),lineStyle:{width:2}}))};
   };
   const chart=jiraMountChart('trend',{title:'问题新增与关闭趋势',options:width=>make(width),
@@ -123,7 +123,7 @@ function renderJiraTrend(data) {
     onClick:p=>{const bucket=buckets[p.dataIndex],kind=p.seriesIndex===0?'created':'closed';
       const issues=data.issues.filter(issue=>{const key=jiraDateKey(kind==='created'?issue.createdAt:issue.closedAt);return key>=bucket.start&&key<=bucket.end;});
       openJiraDetails(`${bucket.start} ~ ${bucket.end} · ${kind==='created'?'新增':'关闭'}问题 · ${issues.length}项`,issues,kind==='closed'?'closure':'stage');},
-    exportOptions:width=>Array.from({length:Math.ceil(buckets.length/12)},(_,index)=>({width,height:300,option:make(width,index*12,true)}))});
+    exportOption:width=>({width,height:320,option:make(width,true)})});
   chart?.on('legendselectchanged',event=>{
     if(!event.selected.新增问题&&!event.selected.关闭问题){chart.dispatchAction({type:'legendSelect',name:event.name});event.selected[event.name]=true;}
     jiraBoardState.trendVisible={created:event.selected.新增问题,closed:event.selected.关闭问题};
@@ -225,8 +225,72 @@ function renderJiraBoardCharts(data) {
   renderJiraOverdue(data);
   jiraMountPie('closure-total',[{name:'已关闭',value:data.summary.closed,color:'#16a38f'},{name:'待关闭',value:data.summary.active,color:'#dce4f0'}],{title:'整体关闭率',centerText:jiraPercent(data.summary.closureRate),onClick:p=>openJiraDetails(p.dataIndex===0?'已关闭问题':'待关闭问题',data.issues.filter(x=>p.dataIndex===0?x.stageCode==='closed':x.stageCode!=='closed'),p.dataIndex===0?'closure':'stage')});
   jiraMountBars('closure-severity',data.closureRates.map(x=>({name:x.severity,value:x.rate,detail:`已关闭 ${x.closed} / 全部 ${x.total}`})),{title:'严重等级关闭率',unit:'%',max:100,onClick:p=>{const item=data.closureRates[p.dataIndex];openJiraDetails(`${item.severity}级问题关闭情况`,data.issues.filter(x=>x.severityLabel===item.severity),'closure');}});
-  jiraMountBars('duration-severity',data.severityAverages.map(x=>({name:x.severity,value:x.averageDays,detail:`有效样本 ${x.sampleCount}项`})),{title:'严重等级平均关闭周期',unit:'天',onClick:p=>{const item=data.severityAverages[p.dataIndex];openJiraDetails(`${item.severity}级已关闭问题`,data.issues.filter(x=>x.stageCode==='closed'&&x.severityLabel===item.severity),'closure');}});
-  jiraMountBars('duration-stage',data.stageAverages.map(x=>({name:x.name,value:x.averageDays,color:jiraStageColors[x.code],detail:`有效样本 ${x.sampleCount}项`})),{title:'各阶段平均处理周期',unit:'天',onClick:p=>{const item=data.stageAverages[p.dataIndex];openJiraDetails(`${item.name}已完成阶段样本`,data.issues.filter(x=>x.completedStageDays&&x.completedStageDays[item.code]!==undefined),'stage');}});
+  renderJiraDurationAnalysis(data);
+}
+
+// Each point retains its exact valid sample set for tooltips, drilldown and CSV.
+function jiraDurationValue(issue,stageCode=null) {
+  if(issue.stageCode!=='closed'||issue.timingReliable!==true)return null;
+  const value=stageCode?issue.completedStageDays?.[stageCode]:issue.closureElapsedDays;
+  return Number.isFinite(value)&&value>=0?value:null;
+}
+
+function jiraDurationGroups(data) {
+  const closed=data.issues.filter(x=>x.stageCode==='closed');
+  const point=(name,issues,stageCode=null,path=name)=>{
+    const samples=issues.filter(x=>jiraDurationValue(x,stageCode)!==null);
+    const value=samples.length?samples.reduce((sum,x)=>sum+jiraDurationValue(x,stageCode),0)/samples.length:null;
+    return {name,path,value,issues:samples,sampleCount:samples.length,excluded:issues.length-samples.length,stageCode};
+  };
+  const categories=data.categories||[],known=new Set(categories.map(x=>x.id));
+  const categoryPoints=categories.filter(node=>!categories.some(x=>x.parentItemId===node.id)||closed.some(x=>x.categoryItemId===node.id))
+    .sort((a,b)=>{
+      const ap=jiraCategoryPath(data,a.id),bp=jiraCategoryPath(data,b.id);
+      for(let i=0;i<Math.min(ap.length,bp.length);i++)if(ap[i].id!==bp[i].id)return ap[i].sortOrder-bp[i].sortOrder||ap[i].name.localeCompare(bp[i].name,'zh-CN');
+      return ap.length-bp.length;
+    }).map(node=>point(node.name+(categories.some(x=>x.parentItemId===node.id)?'（未细分）':''),closed.filter(x=>x.categoryItemId===node.id),null,jiraCategoryPath(data,node.id).map(x=>x.name).join(' / ')));
+  const unclassified=closed.filter(x=>!known.has(x.categoryItemId));
+  if(unclassified.length)categoryPoints.push(point('未分类',unclassified));
+  const severityKeys=['S','A','B','C'];
+  if(closed.some(x=>!severityKeys.includes(x.severityKey)))severityKeys.push('UNKNOWN');
+  const severityPoints=severityKeys.map(key=>point(key==='UNKNOWN'?'未匹配等级':key+'级',closed.filter(x=>key==='UNKNOWN'?!['S','A','B','C'].includes(x.severityKey):x.severityKey===key)));
+  const stagePoints=data.funnel.filter(x=>x.code!=='closed').map(stage=>point(stage.name,closed.filter(x=>Object.hasOwn(x.completedStageDays||{},stage.code)),stage.code));
+  return [{name:'问题分类',points:categoryPoints},{name:'严重等级',points:severityPoints},{name:'处理阶段',points:stagePoints}];
+}
+
+function jiraDurationOption(groups,width) {
+  const base=jiraChartBase('问题处理时长分析'),maximum=jiraChartMaximum(groups.flatMap(g=>g.points.map(p=>p.value)));
+  const left=56,right=24,gap=32,available=width-left-right-gap*2;
+  const weights=groups.map(g=>Math.max(4,g.points.length)),sum=weights.reduce((a,b)=>a+b,0);
+  let offset=left;
+  const layouts=weights.map(weight=>{const layout={left:offset,width:available*weight/sum};offset+=layout.width+gap;return layout;});
+  const crowded=groups.some((g,i)=>layouts[i].width/Math.max(1,g.points.length)<65);
+  return {...base,legend:{show:false},
+    title:groups.map((g,i)=>({text:g.name,left:layouts[i].left+layouts[i].width/2,textAlign:'center',top:12,textStyle:{fontSize:14,color:jiraChartColors[i],fontWeight:600}})),
+    grid:layouts.map(x=>({...x,top:74,bottom:crowded?104:76})),
+    xAxis:groups.map((g,i)=>({type:'category',gridIndex:i,boundaryGap:true,data:g.points.map(p=>p.name),axisTick:{alignWithLabel:true},axisLine:{lineStyle:{color:'#dce4ef'}},axisLabel:{interval:0,fontSize:11,rotate:crowded?45:0,formatter:(name,index)=>{
+      const wrapped=crowded?name:(name.match(/.{1,6}/g)||[name]).join('\n');return wrapped+(g.points[index].value===null?'\n—':'');
+    }}})),
+    yAxis:groups.map((_,i)=>({type:'value',gridIndex:i,min:0,max:maximum,interval:maximum/5,name:i===0?'平均周期（天）':'',axisLabel:{show:i===0,fontSize:11},axisLine:{show:false},axisTick:{show:false},splitLine:{lineStyle:{color:'#eaf0f6'}}})),
+    tooltip:{...base.tooltip,trigger:'item',formatter:p=>{
+      const group=groups[p.seriesIndex],point=group.points[p.dataIndex];
+      return `${esc(group.name+' · '+point.path)}<br>平均 ${point.value.toFixed(1)} 天<br>有效样本 ${point.sampleCount} 项 · 无法判定 ${point.excluded} 项<br>${point.stageCode?'已关闭问题在本阶段的累计耗时':'实际关闭时间－创建时间'}`;
+    }},
+    series:groups.map((g,i)=>({name:g.name,type:'line',xAxisIndex:i,yAxisIndex:i,connectNulls:false,smooth:false,symbol:'circle',symbolSize:8,clip:true,itemStyle:{color:jiraChartColors[i]},lineStyle:{width:2},
+      label:{show:!crowded,position:'top',fontSize:11,formatter:p=>Number.isFinite(p.value)?p.value.toFixed(1):'—'},data:g.points.map(p=>p.value)})),
+    graphic:layouts.slice(1).map(x=>({type:'line',silent:true,shape:{x1:x.left-gap/2,y1:48,x2:x.left-gap/2,y2:342},style:{stroke:'#dce4ef',lineDash:[4,4]}}))};
+}
+
+function renderJiraDurationAnalysis(data) {
+  const groups=jiraDurationGroups(data),minimum=Math.max(920,groups.reduce((sum,g)=>sum+Math.max(4,g.points.length)*70,0)+144);
+  const node=byId('jira-ec-duration-analysis');node.parentElement.style.minWidth=minimum+'px';
+  const rows=groups.flatMap((group,seriesIndex)=>group.points.map((point,dataIndex)=>({name:group.name+' · '+point.path,value:point.value===null?'—':point.value.toFixed(1)+'天',detail:`有效样本 ${point.sampleCount}项；无法判定 ${point.excluded}项`,seriesIndex,dataIndex,clickable:point.sampleCount>0})));
+  jiraMountChart('duration-analysis',{title:'问题处理时长分析',options:width=>jiraDurationOption(groups,width),rows,
+    exportOption:width=>({width,height:420,option:jiraDurationOption(groups,width)}),
+    onClick:p=>{
+      const group=groups[p.seriesIndex],point=group.points[p.dataIndex];if(!point.sampleCount)return;
+      openJiraDetails(`${group.name} · ${point.path} · 平均${point.value.toFixed(1)}天 · ${point.sampleCount}项`,point.issues,'closure',{category:p.seriesIndex===0,duration:{stageCode:point.stageCode}});
+    }});
 }
 
 function renderJiraFollowUpChart(host,items,failedCount) {
@@ -242,16 +306,19 @@ function renderJiraDetailCharts(items) {
   jiraMountBars('detail-assignee',jiraDistribution(items,'assignee','未分配').map(([name,value])=>({name,value})),{title:'处理人分布',visible:6});
 }
 
-function prepareJiraChartsPdf(source,clone) {
-  const original=[...source.querySelectorAll('[data-jira-chart]')];
-  clone.querySelectorAll('[data-jira-chart]').forEach((node,index)=>{
-    const entry=jiraCharts.get(original[index]);if(!entry)return;
-    const width=Math.max(200,node.clientWidth),specs=entry.exportOptions?entry.exportOptions(width):[{width,height:original[index].clientHeight||300,option:entry.options(width)}];
-    node.innerHTML='';node.style.height='auto';node.removeAttribute('_echarts_instance_');
-    for(const spec of specs){
-      const chart=echarts.init(null,null,{renderer:'svg',ssr:true,width:spec.width,height:spec.height});
-      try{chart.setOption({...spec.option,animation:false,tooltip:{show:false}});node.insertAdjacentHTML('beforeend',chart.renderToSVGString());}finally{chart.dispose();}
-    }
+function prepareJiraChartsPdf(snapshots,clone) {
+  clone.querySelectorAll('[data-jira-chart]').forEach(node=>{
+    const snapshot=snapshots.get(node.dataset.jiraChart);
+    if(!snapshot)throw new Error('Missing chart snapshot: '+node.dataset.jiraChart);
+    const {entry,legend,height}=snapshot,width=Math.max(200,node.clientWidth);
+    const spec=entry.exportOption?entry.exportOption(width):{width,height,option:entry.options(width)};
+    node.replaceChildren();node.style.height=spec.height+'px';node.removeAttribute('_echarts_instance_');
+    const chart=echarts.init(null,null,{renderer:'svg',ssr:true,width:spec.width,height:spec.height});
+    try{
+      chart.setOption({...spec.option,animation:false,tooltip:{show:false}});
+      if(legend.length)chart.setOption({legend:legend.map(item=>({selected:item.selected}))});
+      node.innerHTML=chart.renderToSVGString();
+    }finally{chart.dispose();}
   });
   clone.querySelectorAll('.jira-chart-data').forEach(node=>node.remove());
 }
