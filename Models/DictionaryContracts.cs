@@ -10,8 +10,13 @@ public sealed class DictionaryTypeRequest
     public bool IsEnabled { get; set; } = true;
 }
 
+public sealed record JiraCategoryMapping(string FieldId, string MatchType, string MatchValue);
+
+public sealed record JiraIssueCategory(int Id, string Name, int? ParentItemId, int SortOrder, IReadOnlyList<JiraCategoryMapping> Mappings);
+
 public sealed class DictionaryItemRequest
 {
+    public JiraCategoryMapping[] JiraMappings { get; set; } = [];
     public string ItemCode { get; set; } = "";
     public string ItemName { get; set; } = "";
     public string? ScopeValue { get; set; }
