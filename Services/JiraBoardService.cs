@@ -242,19 +242,6 @@ public sealed partial class JiraBoardService
             }
         }).ToArray();
 
-        var closureRates = issues.GroupBy(x => x.SeverityLabel, StringComparer.OrdinalIgnoreCase)
-            .Select(group => new
-            {
-                severity = group.Key,
-                severityKey = group.Select(x => x.SeverityKey).FirstOrDefault() ?? "UNKNOWN",
-                total = group.Count(),
-                closed = group.Count(x => x.StageCode == "closed"),
-                rate = Percent(group.Count(x => x.StageCode == "closed"), group.Count())
-            })
-            .OrderBy(x => SeverityOrder(x.severityKey))
-            .ThenBy(x => x.severity)
-            .ToArray();
-
         var unmatchedStatuses = issues.Where(x => x.StageCode == "other")
             .GroupBy(x => x.Status, StringComparer.OrdinalIgnoreCase)
             .Select(x => new { status = x.Key, count = x.Count() })
@@ -296,7 +283,6 @@ public sealed partial class JiraBoardService
             },
             funnel,
             overdue,
-            closureRates,
             unmatchedStatuses,
             unmatchedSeverities,
             categories = categories.Select(x => new { x.Id, x.Name, x.ParentItemId, x.SortOrder }).ToArray(),
@@ -871,7 +857,6 @@ public sealed partial class JiraBoardService
         id.Equals("priority", StringComparison.OrdinalIgnoreCase) ||
         name.Contains("priority", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
 
-    private static int SeverityOrder(string key) => key switch { "S" => 0, "A" => 1, "B" => 2, "C" => 3, _ => 9 };
     private static double? Average(IEnumerable<double> values)
     {
         var items = values.ToArray();

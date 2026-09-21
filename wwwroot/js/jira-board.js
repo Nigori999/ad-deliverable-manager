@@ -2,7 +2,7 @@ const jiraBoardState = {
   metadata: null, metadataProjectKey: '', projects: [], server: null, analysis: null,
   commentCache: new Map(), commentGeneration: 0, presets: [], editingPresetId: null,
   selectedPresetIds: new Set(), dirty: false, applyingPreset: false,
-  trendRange: '90', trendVisible: { created:true, closed:true }, categoryId: '',
+  trendRange: '90', trendVisible: { created:true, closed:true }, distributionSelection: null,
   overdueSort: 'process', pdfReady: false, comparison: null
 };
 
@@ -28,7 +28,7 @@ async function renderJiraBoard() {
   jiraBoardState.dirty = false;
   jiraBoardState.trendRange = '90';
   jiraBoardState.trendVisible = { created:true, closed:true };
-  jiraBoardState.categoryId = '';
+  jiraBoardState.distributionSelection = null;
   jiraBoardState.overdueSort = 'process';
   jiraBoardState.pdfReady = false;
   jiraBoardState.commentGeneration += 1;
@@ -490,12 +490,11 @@ function mergeJiraAnalyses(entries,cutoffDate){
   const funnel=stages.map(([code,name],order)=>({code,name:code==='new'?'创建':name,order,count:issues.filter(x=>x.maxReachedStageOrder>=order).length}));
   const overdue=stages.slice(0,-1).map(([code,name])=>{const values=issues.filter(x=>x.stageCode===code);return{code,name,count:values.filter(x=>x.stageOverdueDays>0).length,maxOverdueDays:Math.max(0,...values.map(x=>x.stageOverdueDays||0))};});
   overdue.push({code:'closure',name:'关闭总周期',count:active.filter(x=>x.closureOverdueDays>0).length,maxOverdueDays:Math.max(0,...active.map(x=>x.closureOverdueDays||0))});
-  const severityGroups=jiraGroupBy(issues,x=>`${x.severityKey}|${x.severityLabel}`);
-  const closureRates=[...severityGroups.values()].map(group=>({severity:group[0].severityLabel,severityKey:group[0].severityKey,total:group.length,closed:group.filter(x=>x.stageCode==='closed').length,rate:jiraPercentValue(group.filter(x=>x.stageCode==='closed').length,group.length)})).sort((a,b)=>jiraSeverityOrder(a.severityKey)-jiraSeverityOrder(b.severityKey)||a.severity.localeCompare(b.severity));
+
   const unmatchedStatuses=jiraCounts(issues.filter(x=>x.stageCode==='other'),x=>x.status,'status');
   const unmatchedSeverities=jiraCounts(issues.filter(x=>x.severityKey==='UNKNOWN'),x=>x.severityLabel,'severity');
   const generatedAt=entries.map(x=>new Date(x.data.generatedAt)).filter(x=>!Number.isNaN(x.valueOf())).sort((a,b)=>b-a)[0]?.toISOString()||new Date().toISOString();
-  return{categories:[...new Map(entries.flatMap(x=>x.data.categories||[]).map(x=>[x.id,x])).values()],generatedAt,effectiveCutoff:entries.map(x=>x.data.effectiveCutoff).sort((a,b)=>Date.parse(a)-Date.parse(b))[0],jiraBaseUrl:entries[0]?.data.jiraBaseUrl,cutoffDate,project:[...new Set(entries.map(x=>x.data.project))].join('、'),projects:[...new Set(entries.map(x=>x.data.project))],presetNames:entries.map(x=>x.preset.name),standards:entries.map(x=>({project:x.data.project,...x.data.standard})),queries:entries.map(x=>({project:x.data.project,preset:x.preset.name,jql:x.data.query})),truncated:entries.some(x=>x.data.truncated),sourceTotal:entries.reduce((sum,x)=>sum+(x.data.sourceTotal||0),0),historyTruncated:issues.filter(x=>x.historyTruncated).length,summary:{...jiraClosureSummary(issues),total:issues.length,active:active.length,closed:closed.length,closureRate:jiraPercentValue(closed.length,issues.length),averageClosureDays:jiraAverage(closed.filter(x=>x.timingReliable).map(x=>x.closureElapsedDays)),stageOverdue:active.filter(x=>x.stageOverdueDays>0).length,closureOverdue:active.filter(x=>x.closureOverdueDays>0).length},funnel,overdue,closureRates,unmatchedStatuses,unmatchedSeverities,issues};
+  return{categories:[...new Map(entries.flatMap(x=>x.data.categories||[]).map(x=>[x.id,x])).values()],generatedAt,effectiveCutoff:entries.map(x=>x.data.effectiveCutoff).sort((a,b)=>Date.parse(a)-Date.parse(b))[0],jiraBaseUrl:entries[0]?.data.jiraBaseUrl,cutoffDate,project:[...new Set(entries.map(x=>x.data.project))].join('、'),projects:[...new Set(entries.map(x=>x.data.project))],presetNames:entries.map(x=>x.preset.name),standards:entries.map(x=>({project:x.data.project,...x.data.standard})),queries:entries.map(x=>({project:x.data.project,preset:x.preset.name,jql:x.data.query})),truncated:entries.some(x=>x.data.truncated),sourceTotal:entries.reduce((sum,x)=>sum+(x.data.sourceTotal||0),0),historyTruncated:issues.filter(x=>x.historyTruncated).length,summary:{...jiraClosureSummary(issues),total:issues.length,active:active.length,closed:closed.length,closureRate:jiraPercentValue(closed.length,issues.length),averageClosureDays:jiraAverage(closed.filter(x=>x.timingReliable).map(x=>x.closureElapsedDays)),stageOverdue:active.filter(x=>x.stageOverdueDays>0).length,closureOverdue:active.filter(x=>x.closureOverdueDays>0).length},funnel,overdue,unmatchedStatuses,unmatchedSeverities,issues};
 }
 
 function jiraGroupBy(items,keySelector){const groups=new Map();items.forEach(item=>{const key=keySelector(item);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(item);});return groups;}
@@ -583,16 +582,15 @@ function jiraPdfStyles() {
     .jira-compare-controls { grid-template-columns:repeat(4,minmax(0,1fr)) !important; }
     .jira-compare-card { padding:16px !important;break-inside:auto !important; }
     .jira-compare-body { padding:4px 19px 19px !important; }
-    .jira-closure-chart { grid-template-columns:minmax(140px,.7fr) minmax(0,1.3fr) !important; }
+    .jira-dimension-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
+    .jira-scope-actions { display:none !important; }
     .jira-result-actions, .jira-result-jql, .jira-segmented, .jira-chart-data { display: none !important; }
     .jira-chart-warning button { display: none !important; }
     .jira-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
     .jira-diagnosis-grid { grid-template-columns: minmax(0, 1.15fr) minmax(350px, .85fr) !important; }
     .jira-risk-stack { grid-template-columns: minmax(0, 1fr) !important; }
     .jira-two-column { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
-    .jira-variant-body { grid-template-columns: minmax(310px, .8fr) minmax(320px, 1.2fr) !important; }
-    .jira-variant-summary { border-right: 1px solid #edf0f4 !important; border-bottom: 0 !important; padding-bottom: 0 !important; }
-    .jira-panel, .jira-variant-body { max-width:none !important; overflow:visible !important; }
+    .jira-panel, .jira-dimension-grid { max-width:none !important; overflow:visible !important; }
     .jira-duration-scroll { overflow:visible !important; }
     .jira-duration-scroll .jira-echart-wrap { min-width:0 !important; }
     .jira-duration-note { display:none !important; }
@@ -705,12 +703,20 @@ function renderJiraResults(data) {
       </div>
     </div>
     <section class="jira-panel jira-trend-panel"><div class="jira-panel-head"><div><h3>问题新增与关闭趋势</h3><p>对比问题流入和关闭节奏，点击数据点查看对应问题。</p></div><div class="jira-segmented">${[['30','30天'],['90','90天'],['180','180天'],['all','全部']].map(item=>`<button type="button" data-jira-trend-range="${item[0]}" class="${jiraBoardState.trendRange===item[0]?'active':''}">${item[1]}</button>`).join('')}</div></div><div id="jira-trend-chart"></div></section>
-    <section class="jira-panel jira-variant-panel"><div class="jira-panel-head"><div><h3>未关闭问题分类分布</h3><p id="jira-category-hint"></p></div><label class="jira-category-filter"><span>问题分类</span><select id="jira-category-filter">${jiraCategoryOptions(data)}</select></label></div><div class="jira-variant-body"><div class="jira-variant-summary"><strong id="jira-category-selection"></strong><div id="jira-category-distribution"></div></div><div><div class="jira-subhead"><strong>当前处理人问题堆积</strong><span>默认展示前10名，可拖动范围条查看全部</span></div><div id="jira-variant-assignee-chart"></div></div></div></section>
+    <section class="jira-panel jira-variant-panel"><div class="jira-panel-head"><div><h3>未关闭问题分布</h3><p>按严重等级、问题分类查看未关闭问题；点击扇区联动下方处理人分布。</p></div></div>
+      <div class="jira-dimension-grid"><div><h4>按严重等级</h4>${jiraChartSlot('active-severity','按严重等级',300)}</div><div><h4>按问题分类</h4>${jiraChartSlot('active-category','按问题分类',300)}</div></div>
+      <div class="jira-assignee-scope"><div class="jira-subhead"><div><strong>当前处理人问题堆积</strong><p id="jira-category-selection"></p></div><div class="jira-scope-actions"><button type="button" class="btn btn-light btn-sm" id="jira-distribution-details">查看所选明细</button><button type="button" class="btn btn-light btn-sm" id="jira-distribution-reset">重置范围</button></div></div>${jiraChartSlot('variant-assignee','当前处理人问题堆积',300)}</div>
+    </section>
     <div class="jira-section-label"><strong>效率复盘</strong><span>关闭结果与处理周期</span></div>
     <section class="jira-panel" id="jira-closure-comparison"></section>
-    <section class="jira-panel">
-      <div class="jira-panel-head"><div><h3>问题关闭率</h3><p>整体关闭率及各严重等级关闭情况。</p></div></div>
-      <div class="jira-closure-chart">${jiraChartSlot('closure-total','整体关闭率',280)}${jiraChartSlot('closure-severity','严重等级关闭率',280)}</div>
+    <section class="jira-panel jira-rate-panel">
+      <div class="jira-panel-head"><div><h3>问题关闭率</h3><p>各分组已关闭问题数 ÷ 该分组全部问题数，包含超期关闭的问题。</p></div></div>
+      <div class="jira-dimension-grid"><div><h4>按严重等级</h4>${jiraChartSlot('closure-severity','严重等级关闭率',340)}</div><div><h4>按问题分类</h4>${jiraChartSlot('closure-category','问题分类关闭率',340)}</div></div>
+    </section>
+    <section class="jira-panel jira-rate-panel">
+      <div class="jira-panel-head"><div><h3>按期关闭率</h3><p>各分组总周期按期关闭问题数 ÷ 该分组全部已关闭问题数；时限采用各项目、严重等级对应的 JIRA 时效标准。</p></div></div>
+      <div class="jira-dimension-grid"><div><h4>按严重等级</h4>${jiraChartSlot('ontime-severity','严重等级按期关闭率',340)}</div><div><h4>按问题分类</h4>${jiraChartSlot('ontime-category','问题分类按期关闭率',340)}</div></div>
+      <p class="jira-duration-note">无法判定保留在已关闭分母中；“—”表示无已关闭样本。点击柱子默认查看按期问题，可筛选超期、无法判定及全部已关闭问题。</p>
     </section>
     <section class="jira-panel jira-duration-panel">
       <div class="jira-panel-head"><div><h3>问题处理时长分析</h3><p>仅统计已关闭问题：问题分类、严重等级按创建至实际关闭计算；处理阶段按本阶段累计耗时计算。共用天数刻度，各分区独立连线。</p></div></div>
@@ -721,8 +727,6 @@ function renderJiraResults(data) {
   renderJiraBoardCharts(data);
   renderJiraTrend(data);
   renderJiraClosureComparisons(data);
-  if(jiraBoardState.categoryId!=='unmapped'&&!data.categories.some(x=>String(x.id)===jiraBoardState.categoryId))jiraBoardState.categoryId='';
-  byId('jira-category-filter').value=jiraBoardState.categoryId;
   renderJiraCategories(data);
   loadJiraFollowUpAnalysis(data);
 
@@ -734,7 +738,6 @@ function renderJiraResults(data) {
   byId('jira-export-pdf').onclick=exportJiraBoardPdf;
   byId('jira-edit-query').onclick=()=>document.querySelector('.jira-config-card').scrollIntoView({behavior:'smooth',block:'start'});
   results.querySelectorAll('[data-jira-trend-range]').forEach(button=>button.onclick=()=>{jiraBoardState.trendRange=button.dataset.jiraTrendRange;renderJiraTrend(data);});
-  byId('jira-category-filter').onchange=event=>{jiraBoardState.categoryId=event.target.value;renderJiraCategories(data);};
   results.querySelectorAll('[data-jira-overdue-sort]').forEach(button=>button.onclick=()=>{jiraBoardState.overdueSort=button.dataset.jiraOverdueSort;renderJiraOverdue(data);});
   results.querySelectorAll('[data-jira-kind]').forEach(button => button.onclick = () => {
     const kind = button.dataset.jiraKind;
@@ -764,27 +767,32 @@ function jiraDistribution(items, field, emptyLabel) {
   return [...values.entries()].sort((a, b) => b[1] - a[1]);
 }
 
-function openJiraDetails(title, items, overdueMode, { compact = false, category = false, duration = null } = {}) {
+function jiraMatchesTiming(issue,selection) {
+  return !selection||(selection==='onTime'?issue.isOnTime===true:selection==='overdue'?issue.isOnTime===false:typeof issue.isOnTime!=='boolean');
+}
+
+function openJiraDetails(title, items, overdueMode, { compact = false, category = false, duration = null, timing = false } = {}) {
   let page = 1,currentItems=[...items];
   const pageSize = 50;
   const trigger=document.activeElement;
   const severityOptions=[...new Set(items.map(x=>x.severityLabel))].sort((a,b)=>jiraSeverityOrder(items.find(x=>x.severityLabel===a)?.severityKey)-jiraSeverityOrder(items.find(x=>x.severityLabel===b)?.severityKey));
   const statusOptions=[...new Set(items.map(x=>x.status))].sort();
   const assigneeOptions=[...new Set(items.map(x=>x.assignee))].sort();
+  const timingFilter=timing?'<label><span>总周期时效</span><select id="jira-detail-timing"><option value="onTime">按期</option><option value="overdue">超期</option><option value="unknown">无法判定</option><option value="">全部已关闭</option></select></label>':'';
   const categoryFilter=category?`<label><span>问题分类</span><select id="jira-detail-category">${jiraCategoryOptions({...jiraBoardState.analysis,categories:jiraBoardState.analysis.categories.filter(node=>items.some(issue=>jiraCategoryIncludes(jiraBoardState.analysis,issue,String(node.id))))})}</select></label>`:'';
   disposeJiraCharts(modalRoot);
-  modalRoot.innerHTML = `<div class="modal-backdrop jira-detail-backdrop"><div class="jira-detail-modal" role="dialog" aria-modal="true" aria-labelledby="jira-detail-title"><div class="jira-detail-head"><div><h3 id="jira-detail-title">${esc(title)}</h3><p>当前穿透范围共 ${jiraNumber(items.length)} 项，支持搜索、快速筛选和导出当前结果。</p></div><div class="jira-detail-actions"><button type="button" class="btn btn-light btn-sm jira-export-button" data-jira-export ${items.length?'':'disabled'}><span>↓</span>导出当前结果</button><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div></div><div class="jira-detail-filters"><label class="jira-detail-search"><span>搜索</span><input id="jira-detail-search" placeholder="输入Jira编号或标题"></label><label><span>严重等级</span><select id="jira-detail-severity"><option value="">全部</option>${severityOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label><label><span>当前状态</span><select id="jira-detail-status"><option value="">全部</option>${statusOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label><label><span>当前处理人</span><select id="jira-detail-assignee"><option value="">全部</option>${assigneeOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label>${categoryFilter}</div><div class="jira-detail-body" id="jira-detail-body"></div></div></div>`;
+  modalRoot.innerHTML = `<div class="modal-backdrop jira-detail-backdrop"><div class="jira-detail-modal" role="dialog" aria-modal="true" aria-labelledby="jira-detail-title"><div class="jira-detail-head"><div><h3 id="jira-detail-title">${esc(title)}</h3><p>当前穿透范围共 ${jiraNumber(items.length)} 项，支持搜索、快速筛选和导出当前结果。</p></div><div class="jira-detail-actions"><button type="button" class="btn btn-light btn-sm jira-export-button" data-jira-export ${items.length?'':'disabled'}><span>↓</span>导出当前结果</button><button type="button" class="jira-detail-close" aria-label="关闭">×</button></div></div><div class="jira-detail-filters"><label class="jira-detail-search"><span>搜索</span><input id="jira-detail-search" placeholder="输入Jira编号或标题"></label><label><span>严重等级</span><select id="jira-detail-severity"><option value="">全部</option>${severityOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label><label><span>当前状态</span><select id="jira-detail-status"><option value="">全部</option>${statusOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label><label><span>当前处理人</span><select id="jira-detail-assignee"><option value="">全部</option>${assigneeOptions.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label>${categoryFilter}${timingFilter}</div><div class="jira-detail-body" id="jira-detail-body"></div></div></div>`;
   const onKeydown=event=>{if(event.key==='Escape')close();if(event.key==='Tab'){const focusable=[...modalRoot.querySelectorAll('button:not([disabled]),input,select,a[href]')];if(!focusable.length)return;const first=focusable[0],last=focusable.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}};
   const close = () => {document.removeEventListener('keydown',onKeydown);disposeJiraCharts(modalRoot);modalRoot.replaceChildren();trigger?.focus?.();};
   document.addEventListener('keydown',onKeydown);
   modalRoot.querySelector('.jira-detail-close').onclick = close;
-  modalRoot.querySelector('[data-jira-export]').onclick = event => exportJiraDetails(title,currentItems,overdueMode,event.currentTarget,{compact,category,duration});
+  modalRoot.querySelector('[data-jira-export]').onclick = event => exportJiraDetails(title,currentItems,overdueMode,event.currentTarget,{compact,category,duration,timing});
   modalRoot.querySelector('.jira-detail-backdrop').onclick = event => { if (event.target.classList.contains('jira-detail-backdrop')) close(); };
 
   const renderPage = async () => {
     if (!modalRoot.querySelector('#jira-detail-body')) return;
     const keyword=byId('jira-detail-search').value.trim().toLowerCase(),severityValue=byId('jira-detail-severity').value,statusValue=byId('jira-detail-status').value,assigneeValue=byId('jira-detail-assignee').value;
-    currentItems=items.filter(issue=>(!category||jiraCategoryIncludes(jiraBoardState.analysis,issue,byId('jira-detail-category').value))&&(!keyword||issue.key.toLowerCase().includes(keyword)||issue.summary.toLowerCase().includes(keyword)||(category&&String(issue.variantLabel||'').toLowerCase().includes(keyword)))&&(!severityValue||issue.severityLabel===severityValue)&&(!statusValue||issue.status===statusValue)&&(!assigneeValue||issue.assignee===assigneeValue));
+    currentItems=items.filter(issue=>(!timing||jiraMatchesTiming(issue,byId('jira-detail-timing').value))&&(!category||jiraCategoryIncludes(jiraBoardState.analysis,issue,byId('jira-detail-category').value))&&(!keyword||issue.key.toLowerCase().includes(keyword)||issue.summary.toLowerCase().includes(keyword)||(category&&String(issue.variantLabel||'').toLowerCase().includes(keyword)))&&(!severityValue||issue.severityLabel===severityValue)&&(!statusValue||issue.status===statusValue)&&(!assigneeValue||issue.assignee===assigneeValue));
     const totalPages = Math.max(1, Math.ceil(currentItems.length / pageSize));
     page = Math.min(Math.max(1, page), totalPages);
     const visible = currentItems.slice((page - 1) * pageSize, page * pageSize);
@@ -800,7 +808,7 @@ function openJiraDetails(title, items, overdueMode, { compact = false, category 
     if(currentItems.length)renderJiraDetailCharts(currentItems);
     if(!compact)await loadJiraComments(visible);
   };
-  ['jira-detail-search','jira-detail-severity','jira-detail-status','jira-detail-assignee',...(category?['jira-detail-category']:[])].forEach(id=>byId(id).addEventListener(id==='jira-detail-search'?'input':'change',()=>{page=1;renderPage();}));
+  ['jira-detail-search','jira-detail-severity','jira-detail-status','jira-detail-assignee',...(category?['jira-detail-category']:[]),...(timing?['jira-detail-timing']:[])].forEach(id=>byId(id).addEventListener(id==='jira-detail-search'?'input':'change',()=>{page=1;renderPage();}));
   renderPage();
   setTimeout(()=>byId('jira-detail-search')?.focus(),0);
 }
@@ -866,7 +874,7 @@ function jiraCsvCell(value) {
   return `"${text.replaceAll('"','""')}"`;
 }
 
-async function exportJiraDetails(title,items,overdueMode,button,{compact=false,category=false,duration=null}={}) {
+async function exportJiraDetails(title,items,overdueMode,button,{compact=false,category=false,duration=null,timing=false}={}) {
   if (!items.length) return;
   const original=button.textContent;
   button.disabled=true;button.textContent=compact?'正在导出…':'准备最新评论…';
@@ -878,6 +886,7 @@ async function exportJiraDetails(title,items,overdueMode,button,{compact=false,c
     return [issue.projectKey,issue.sourceSchemes.join('、'),issue.key,issue.summary,issue.severityLabel,issue.assignee,issue.status,issue.stageName,comment.error?`最新评论加载失败：${comment.error}`:(comment.body||''),comment.author||'',comment.created||'',issue.createdAt,issue.closedAt||'',issue.stageElapsedDays,issue.stageLimitDays??'',issue.stageOverdueDays,issue.stageCode==='closed'&&!issue.timingReliable?'无法判定':issue.closureElapsedDays??'无法判定',issue.closureLimitDays??'',issue.stageCode==='closed'&&typeof issue.isOnTime!=='boolean'?'无法判定':issue.closureOverdueDays];
   });
   if(category){headers.push('问题分类','JIRA原始选项');rows.forEach((row,index)=>row.push(jiraCategoryLabel(jiraBoardState.analysis,items[index]),items[index].variantLabel||'未填写'));}
+  if(timing){headers.push('总周期时效');rows.forEach((row,index)=>row.push(items[index].isOnTime===true?'按期':items[index].isOnTime===false?'超期':'无法判定'));}
   if(duration){headers.push('本次统计耗时（天）');rows.forEach((row,index)=>row.push(jiraDurationValue(items[index],duration.stageCode)));}
   const csv='\uFEFF'+[headers,...rows].map(row=>row.map(jiraCsvCell).join(',')).join('\r\n');
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
