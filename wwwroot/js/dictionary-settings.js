@@ -66,9 +66,9 @@ function dictionaryItemsTable(dictionary, items) {
   const tree = dictionary.structureMode === 'TREE';
   if (!items.length) return `<div class="dictionary-empty"><strong>暂无字典项</strong><p>${dictionary.isEnabled ? '可新增第一个字典项开始配置。' : '该字典已停用，如需维护请先启用。'}</p>${canCreate ? '<button type="button" class="btn btn-primary" id="new-dictionary-item-empty">+ 新增字典项</button>' : ''}</div>`;
   const rows = tree ? flattenDictionaryItems(items) : items.map(item => ({ item, depth: 0 }));
-  return `<div class="table-wrap dictionary-table"><table><thead><tr><th>字典项名称</th><th>字典项值</th><th>描述</th><th>排序</th><th>业务引用</th><th>操作</th></tr></thead><tbody>${rows.map(({ item, depth }) => `<tr>
+  return `<div class="table-wrap dictionary-table"><table><thead><tr><th>字典项名称</th><th>字典项值</th>${dictionary.code==='JIRA_ISSUE_CATEGORY'?'<th>JIRA选项映射</th>':''}<th>描述</th><th>排序</th><th>业务引用</th><th>操作</th></tr></thead><tbody>${rows.map(({ item, depth }) => `<tr>
     <td><div class="dictionary-tree-name" style="--tree-depth:${depth}">${tree ? `<span class="tree-connector">${item.childCount ? '▾' : '·'}</span>` : ''}<strong>${esc(item.name)}</strong></div></td>
-    <td class="code">${esc(item.value)}</td><td class="muted dictionary-description-cell">${esc(item.description || '—')}</td><td>${item.sortOrder}</td>
+    <td class="code">${esc(item.value)}</td>${dictionary.code==='JIRA_ISSUE_CATEGORY'?`<td>${(item.jiraMappings||[]).map(x=>`<div>${esc(x.matchType==='ID'?'选项ID':'完整名称')}：${esc(x.matchValue)}<small class="muted"> · ${esc(x.fieldId||'所有已选分类字段')}</small></div>`).join('')||'<span class="muted">分组节点 / 尚未映射</span>'}</td>`:''}<td class="muted dictionary-description-cell">${esc(item.description || '—')}</td><td>${item.sortOrder}</td>
     <td>${item.usageCount ? `<span class="badge">${item.usageCount} 条</span>` : '<span class="muted">未引用</span>'}</td>
     <td><div class="inline-actions">${canCreate && tree ? `<button type="button" class="btn btn-light btn-sm dictionary-item-child" data-id="${item.id}">新增下级</button>` : ''}${canEdit ? `<button type="button" class="btn btn-light btn-sm dictionary-item-edit" data-id="${item.id}">编辑</button>` : ''}${canDelete ? `<button type="button" class="btn btn-danger btn-sm dictionary-item-delete" data-id="${item.id}">删除</button>` : ''}</div></td>
   </tr>`).join('')}</tbody></table></div>`;
@@ -204,6 +204,7 @@ function parentOptions(items, item, selectedParentId) {
 
 function openDictionaryItemForm(dictionary, items, item, defaultParentId = null) {
   const editing = Boolean(item);
+  const isJiraCategory = dictionary.code === 'JIRA_ISSUE_CATEGORY';
   const valueLocked = editing && item.usageCount > 0;
   const scopeOptions = document.querySelectorAll('#dictionary-scope-filter option');
   const scopeField = dictionary.scopeMode === 'DELIVERABLE_TYPE'
@@ -216,6 +217,7 @@ function openDictionaryItemForm(dictionary, items, item, defaultParentId = null)
     <div class="field"><label>字典项名称 *</label><input name="itemName" value="${esc(item?.name || '')}" required maxlength="80"></div>
     <div class="field"><label>排序</label><input name="sortOrder" type="number" min="0" max="9999" value="${item?.sortOrder ?? 10}"></div>
     <div class="field span-2"><label>字典项描述</label><textarea name="description" maxlength="500" placeholder="补充字典项的业务含义">${esc(item?.description || '')}</textarea></div>
+    ${isJiraCategory ? `<div class="field span-2 jira-mapping-editor"><label>JIRA选项映射</label><p class="form-hint">大类仅汇总下级时可留空。完整名称需与JIRA选项一致；已知选项ID时建议按ID匹配，避免改名影响分类。字段ID可在看板的字段选择中查看。修改或删除映射后，重新分析生效。</p><div id="jira-mapping-rows"></div><button type="button" class="btn btn-light btn-sm" id="jira-mapping-add">+ 添加映射</button></div>` : ''}
   </div></form>`;
   showModal(editing ? `编辑字典项 · ${dictionary.name}` : `新增字典项 · ${dictionary.name}`, body, { submitText: editing ? '保存修改' : '新增字典项', onSubmit: async close => {
     const form = byId('dictionary-item-form');
@@ -226,7 +228,8 @@ function openDictionaryItemForm(dictionary, items, item, defaultParentId = null)
       scopeValue: dictionary.scopeMode === 'DELIVERABLE_TYPE' ? (valueLocked ? item.scopeValue : form.elements.scopeValue.value) : null,
       parentItemId: dictionary.structureMode === 'TREE' && form.elements.parentItemId.value ? Number(form.elements.parentItemId.value) : null,
       sortOrder: Number(form.elements.sortOrder.value) || 0,
-      description: form.elements.description.value.trim() || null
+      description: form.elements.description.value.trim() || null,
+      jiraMappings: isJiraCategory ? [...form.querySelectorAll('.jira-mapping-row')].map(row=>({fieldId:row.querySelector('[data-mapping-field]').value.trim(),matchType:row.querySelector('[data-mapping-type]').value,matchValue:row.querySelector('[data-mapping-value]').value.trim()})) : []
     };
     const endpoint = editing ? `/internal/master-data/dictionaries/${encodeURIComponent(dictionary.code)}/items/${item.id}` : `/internal/master-data/dictionaries/${encodeURIComponent(dictionary.code)}/items`;
     const result = await api(endpoint, { method: editing ? 'PUT' : 'POST', body: JSON.stringify(payload) });
@@ -235,6 +238,18 @@ function openDictionaryItemForm(dictionary, items, item, defaultParentId = null)
     dictionaryManagementState.scopeValue = payload.scopeValue || '';
     await renderDictionaryManagement();
   }});
+  if (isJiraCategory) {
+    const addMapping = (mapping = {}) => {
+      const row = document.createElement('div');row.className='jira-mapping-row';
+      row.innerHTML=`<label><span>匹配方式</span><select data-mapping-type><option value="NAME">完整名称</option><option value="ID" ${mapping.matchType==='ID'?'selected':''}>选项ID</option></select></label><label><span>JIRA字段ID</span><input data-mapping-field maxlength="100" value="${esc(mapping.fieldId||'')}" placeholder="名称匹配可留空"></label><label><span>JIRA选项名称 / ID *</span><input data-mapping-value required maxlength="200" value="${esc(mapping.matchValue||'')}" placeholder="填写JIRA中的原始值"></label><button type="button" class="btn btn-danger btn-sm" aria-label="删除此映射">删除</button>`;
+      row.querySelector('button').onclick=()=>row.remove();
+      const update=()=>{const byId=row.querySelector('[data-mapping-type]').value==='ID';const input=row.querySelector('[data-mapping-field]');input.required=byId;input.placeholder=byId?'如 customfield_12345':'留空适用于所有已选分类字段';};
+      row.querySelector('select').onchange=update;update();
+      byId('jira-mapping-rows').appendChild(row);
+    };
+    (item?.jiraMappings||[]).forEach(addMapping);
+    byId('jira-mapping-add').onclick=()=>addMapping();
+  }
 }
 
 async function deleteDictionaryType(dictionary) {
