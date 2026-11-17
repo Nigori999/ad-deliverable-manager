@@ -30,7 +30,7 @@ public sealed class KeyItemRequest
     public string PlannedEndDate { get; set; } = "";
     public string? ActualEndDate { get; set; }
     public string Status { get; set; } = "NEW";
-    public int ProjectPlanNodeId { get; set; }
+    public int? ProjectPlanNodeId { get; set; }
     public int Revision { get; set; }
 }
 

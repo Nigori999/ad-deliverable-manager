@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS KeyItems (
     PlannedEndDate TEXT NOT NULL,
     ActualEndDate TEXT,
     ManualStatus TEXT NOT NULL DEFAULT 'NEW',
-    ProjectPlanNodeId INTEGER NOT NULL,
+    ProjectPlanNodeId INTEGER,
     CreatedBy TEXT NOT NULL,
     CreatedAt TEXT NOT NULL,
     UpdatedBy TEXT NOT NULL,
