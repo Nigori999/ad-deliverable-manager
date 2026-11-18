@@ -103,7 +103,7 @@ public sealed class MasterDataController : ControllerBase
     public async Task<IActionResult> DeleteProject(int id, CancellationToken cancellationToken)
     {
         await using var connection = await _database.OpenConnectionAsync(cancellationToken);
-        await using var check = connection.CreateCommand(); check.CommandText = "SELECT COUNT(*) FROM Deliverables WHERE ProjectId=$id"; check.Parameters.AddValue("$id", id);
+        await using var check = connection.CreateCommand(); check.CommandText = "SELECT (SELECT COUNT(*) FROM Deliverables WHERE ProjectId=$id)+(SELECT COUNT(*) FROM VehicleProjectPlans WHERE ProjectId=$id)"; check.Parameters.AddValue("$id", id);
         var used = Convert.ToInt32(await check.ExecuteScalarAsync(cancellationToken));
         if (used > 0) return Conflict(new { message = $"该项目已被 {used} 个交付物引用，不能删除。请先处理关联数据。" });
         await using var command = connection.CreateCommand(); command.CommandText = "UPDATE Projects SET IsEnabled=0 WHERE Id=$id AND IsEnabled=1"; command.Parameters.AddValue("$id", id);
