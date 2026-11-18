@@ -38,6 +38,7 @@ public sealed class KeyItemTaskRequest
 {
     public string TaskName { get; set; } = "";
     public string Status { get; set; } = "NOT_STARTED";
+    public string PlannedStartDate { get; set; } = "";
     public string PlannedEndDate { get; set; } = "";
     public string? ActualEndDate { get; set; }
     public string? Output { get; set; }
