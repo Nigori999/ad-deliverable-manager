@@ -31,6 +31,8 @@ builder.Services.AddScoped<PermissionUserRepository>();
 builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<DictionaryRepository>();
 builder.Services.AddScoped<IssueManagementRepository>();
+builder.Services.AddScoped<ProjectPlanRepository>();
+builder.Services.AddScoped<KeyItemRepository>();
 builder.Services.AddScoped<JiraConfigurationRepository>();
 builder.Services.AddScoped<JiraReviewRepository>();
 builder.Services.AddHttpClient<JiraBoardService>(client => client.Timeout = TimeSpan.FromMinutes(3))
